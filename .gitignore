@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg
+*.egg-info/
+*.pyo
+*.pyd
+.Python
+*.sqlite3
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+
+# Environnements
+env/
+.venv/
+venv/
+loan-env/
+
+# VS Code / IDE
+.vscode/
+.idea/
+
+# Mac OS
+.DS_Store
+
+# Logs et caches
+*.log
+*.out
+*.bak
+.cache/
+pytest_cache/
+coverage/
+
+# Données
+*.csv
+*.xlsx
+*.xls
+*.json
+*.db
+
+# Artefacts du modèle
+*.joblib
+*.pkl
+*.h5
+
+# FastAPI / Uvicorn
+*.pid
+
+# Streamlit
+.streamlit/
+
+# Fichiers secrets (optionnel si tu veux les ignorer)
+.env
+.env.*
+
+# Outputs / exports
+reports/
+outputs/
+

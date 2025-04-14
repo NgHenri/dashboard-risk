@@ -1,0 +1,29 @@
+name: loan-env
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - streamlit
+  - fastapi
+  - uvicorn
+  - lightgbm
+  - scikit-learn
+  - pandas
+  - numpy
+  - joblib
+  - matplotlib
+  - seaborn
+  - plotly
+  - shap
+  - lime
+  - openpyxl
+  - requests
+  - typing-extensions
+  - evidently
+  - ipykernel
+  - pytest            # ✅ pour les tests unitaires
+  - coverage          # ✅ pour la couverture de tests
+  - pip:
+      - pyngrok
