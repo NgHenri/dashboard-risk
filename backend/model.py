@@ -8,17 +8,18 @@ def load_model_and_pipeline(model_path):
     return joblib.load(model_path)  # Cela retourne un dict
 
 def predict_score(artifacts, input_data, threshold=None):
-    model = artifacts['model']
-    scaler = artifacts['scaler']
-    metadata = artifacts['metadata']
+    model = artifacts.get('model')
+    scaler = artifacts.get('scaler')
+    metadata = artifacts.get('metadata', {})
+
+    if model is None or scaler is None:
+        raise ValueError("Modèle ou scaler manquant dans les artefacts.")
     
-    # Vérifie si 'features' existe dans les métadonnées
-    expected_features = metadata.get('features', None)
-    
-    if expected_features is None:
+    expected_features = metadata.get('features')
+    if not expected_features:
         raise ValueError("Les features attendues ne sont pas spécifiées dans les métadonnées.")
     
-    # Vérification que input_data est bien un DataFrame
+    # Vérification du type de données d'entrée
     if not isinstance(input_data, pd.DataFrame):
         raise ValueError("Les données d'entrée doivent être un DataFrame.")
     
@@ -27,17 +28,29 @@ def predict_score(artifacts, input_data, threshold=None):
     if missing_cols:
         raise ValueError(f"Colonnes manquantes dans les données d'entrée : {missing_cols}")
     
-    # Filtrage des données d'entrée selon les features attendues
-    input_data = input_data[expected_features]
+    # Filtrage et réordonnancement
+    X = input_data[expected_features].copy()
     
-    # Transformation des données d'entrée
-    X_scaled = scaler.transform(input_data)
+    # Transformation des données
+    try:
+        X_scaled = scaler.transform(X)
+    except Exception as e:
+        raise RuntimeError(f"Erreur lors de la transformation des données : {e}")
     
-    # Prédiction
-    proba = model.predict_proba(X_scaled)[:, 1]
+    # Calcul des probabilités
+    try:
+        proba = model.predict_proba(X_scaled)[:, 1]
+    except Exception as e:
+        raise RuntimeError(f"Erreur lors de la prédiction : {e}")
+    
+    # Utilisation du seuil par défaut si non spécifié
+    if threshold is None:
+        threshold = metadata.get('optimal_threshold', 0.5)
+    
     pred = (proba >= threshold).astype(int)
     
     return float(proba[0]), int(pred[0])
+
 
 
 
