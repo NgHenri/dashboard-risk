@@ -6,9 +6,11 @@ import matplotlib.pyplot as plt
 import warnings
 import joblib
 
+# Désactivation des avertissements
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 
+# URL de l'API (changer l'URL selon ton serveur)
 API_URL = "http://localhost:8000"  # Remplace par l'URL de ton serveur
 
 # === Chargement des données test ===
@@ -20,8 +22,8 @@ st.title("🏦 Dashboard Crédit - Prédictions & Explicabilité")
 # Désactivation des détails d'erreurs de Streamlit
 st.set_option('client.showErrorDetails', False)
 
-# === Choix du ou des clients ===
-selected_ids = st.multiselect("Sélectionner un ou plusieurs clients", client_ids, max_selections=5)
+# === Choix d'un client ===
+selected_id = st.selectbox("Sélectionner un client", client_ids)
 
 # Initialisation de SHAP
 # Charger les artefacts du modèle comme avant
@@ -32,11 +34,14 @@ scaler = artifacts['scaler']
 features = artifacts['metadata']['features']
 explainer = shap.Explainer(model)
 
-for client_id in selected_ids:
-    st.subheader(f"Client ID : {client_id}")
+# Bouton pour soumettre la prédiction et analyse SHAP
+submitted = st.button("Submit")
+
+if submitted:
+    st.subheader(f"Client ID : {selected_id}")
     
     # Sélection des données du client et transformation en dict
-    client_data = df_test[df_test["SK_ID_CURR"] == client_id].drop(columns=["SK_ID_CURR"]).to_dict(orient="records")[0]
+    client_data = df_test[df_test["SK_ID_CURR"] == selected_id].drop(columns=["SK_ID_CURR"]).to_dict(orient="records")[0]
 
     # === Prédiction ===
     with st.spinner("Prédiction en cours..."):
@@ -58,9 +63,10 @@ for client_id in selected_ids:
             shap_values = explainer(X_scaled)
 
             # Création d'un graphique SHAP avec summary_plot
-            fig, ax = plt.subplots(figsize=(5, 3))
+            fig, ax = plt.subplots(figsize=(10, 6))
             shap.summary_plot(shap_values, X, plot_type="bar", show=False)  # Bar plot pour plus de clarté
             st.pyplot(fig)
 
         except requests.exceptions.RequestException as e:
             st.error(f"Erreur lors de l'analyse SHAP : {e}")
+
