@@ -7,6 +7,8 @@ import warnings
 import joblib
 import config
 from risk_gauge import show_risk_gauge, display_risk_message, animate_risk_gauge
+import numpy as np
+from st_aggrid import AgGrid
 
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -26,10 +28,22 @@ def load_test_data():
 @st.cache_resource
 def load_model_artifacts():
     artifacts = joblib.load(ARTIFACT_PATH)
-    return artifacts['model'], artifacts['scaler'], artifacts['metadata']['features'], shap.TreeExplainer(artifacts['model'])
+    model = artifacts['model']
+    scaler = artifacts['scaler']
+    features = artifacts['metadata']['features']
+    explainer = shap.TreeExplainer(model)
+    
+    # Précalcul des SHAP values globales (échantillonné pour plus de rapidité)
+    df_test_sample = df_test[features].sample(min(1000, len(df_test)), random_state=42)
+    df_test_sample_scaled = scaler.transform(df_test_sample)
+    global_shap_values = explainer.shap_values(df_test_sample_scaled)
+    
+    return model, scaler, features, explainer, global_shap_values, df_test_sample
 
 df_test = load_test_data()
-model, scaler, features, explainer = load_model_artifacts()
+model, scaler, features, explainer, global_shap_values, df_test_sample = load_model_artifacts()
+#print(f"Nombre de clients dans l'échantillon global : {len(df_test_sample)}")
+#print(f"Shape des SHAP values globales : {global_shap_values.shape}")
 
 client_ids = df_test["SK_ID_CURR"].unique().astype(int)
 
@@ -95,7 +109,7 @@ if submitted:
         st.session_state.predicted = False
 
 # ===== Affichage des résultats =====
-col_left, col_right = st.columns([1, 2])
+col_left, col_right = st.columns([1, 1])
 
 # Colonne gauche - Toujours visible
 with col_left:
@@ -142,11 +156,39 @@ with col_left:
     # Construction du DataFrame pour affichage
     df_infos = pd.DataFrame(list(infos.items()), columns=["Libellé", "Valeur"])
     df_infos["Valeur"] = df_infos["Valeur"].astype(str)  # 🔥 force explicite en string
-    st.dataframe(df_infos)
+    #st.dataframe(df_infos)
+    AgGrid(df_infos, height=200, fit_columns_on_grid_load=True)
 
+    # --- Analyse SHAP Globale ---
+    if st.session_state.predicted and st.session_state.show_shap:
+        st.markdown("---")
+        st.subheader("Analyse Globale")
+        with st.spinner("Calcul des tendances globales..."):
+            try:
+                # Création du graphique
+                plt.figure(figsize=(10, 6))
+                
+                # Version avec summary_plot seulement
+                shap.summary_plot(
+                    global_shap_values,
+                    df_test_sample[features],
+                    plot_type="dot",  # ou "bar" selon votre préférence
+                    max_display=10,
+                    show=False
+                )
+                
+                # Personnalisation du titre
+                plt.title("Impact Global des Variables\n(Rouge=Augmente le risque, Bleu=Diminue le risque)", pad=20)
+                
+                # Affichage
+                st.pyplot(plt.gcf())
+                plt.close()
+                
+            except Exception as e:
+                st.error(f"Erreur analyse globale : {str(e)}")
 # Colonne droite - Résultats prédiction
 with col_right:
-    st.subheader("Analyse du risque client")
+    #st.subheader("Analyse du risque client")
 
     if st.session_state.predicted:
         try:
@@ -173,7 +215,6 @@ with col_right:
                 score=st.session_state.score_float,
                 threshold=THRESHOLD
             )
-
             # --- 3. Explications SHAP indépendantes ---
             if st.session_state.show_shap:
                 st.markdown("---")
@@ -185,9 +226,14 @@ with col_right:
                         index=X.index
                     )
 
+                    #shap_values = explainer(X_scaled)
+                    #fig, ax = plt.subplots(figsize=(10, 6))
+                    #shap.plots.bar(shap_values[0], max_display=10, show=False)
+                    #st.pyplot(fig)
+
                     shap_values = explainer(X_scaled)
                     fig, ax = plt.subplots(figsize=(10, 6))
-                    shap.plots.bar(shap_values[0], max_display=10, show=False)
+                    shap.plots.waterfall(shap_values[0], max_display=10, show=False)
                     st.pyplot(fig)
 
         except Exception as e:
