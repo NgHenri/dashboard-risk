@@ -8,7 +8,17 @@ import joblib
 import config
 from risk_gauge import show_risk_gauge, display_risk_message, animate_risk_gauge
 import numpy as np
-from st_aggrid import AgGrid
+from utils.formatters import (
+    safe_get, format_currency, format_percentage,
+    format_gender, format_years
+)
+from utils.styling import style_rules, build_dynamic_styling
+from matplotlib import pyplot as plt
+import seaborn as sns
+import pandas as pd
+from st_aggrid import AgGrid, JsCode, GridOptionsBuilder, GridUpdateMode
+from st_aggrid.grid_options_builder import GridOptionsBuilder
+from utils.visuals import plot_boxplot_comparison
 
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -42,10 +52,30 @@ def load_model_artifacts():
 
 df_test = load_test_data()
 model, scaler, features, explainer, global_shap_values, df_test_sample = load_model_artifacts()
-#print(f"Nombre de clients dans l'échantillon global : {len(df_test_sample)}")
-#print(f"Shape des SHAP values globales : {global_shap_values.shape}")
 
-client_ids = df_test["SK_ID_CURR"].unique().astype(int)
+# ===== Fonctions de service =====
+@st.cache_data
+def fetch_client_ids():
+    try:
+        response = requests.get(f"{API_URL}/client_ids")
+        return response.json()["client_ids"]
+    except Exception as e:
+        st.error(f"Erreur récupération IDs : {str(e)}")
+        return []
+
+def fetch_client_info(client_id):
+    try:
+        response = requests.get(f"{API_URL}/client_info/{client_id}")
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        st.error(f"Erreur infos client : {str(e)}")
+        return None
+
+client_ids = fetch_client_ids()
+
+
+#client_ids = df_test["SK_ID_CURR"].unique().astype(int)
 
 # ===== Sidebar =====
 st.sidebar.markdown("## 🔍 Analyse d'un client")
@@ -81,6 +111,17 @@ if st.session_state.previous_id != selected_id:
         del st.session_state.current_animated_id
     st.session_state.previous_id = selected_id
 
+# ==== visu =======    
+def plot_shap_waterfall(shap_data):
+    plt.figure(figsize=(10, 6))
+    shap.plots._waterfall.waterfall_legacy(
+        shap_data["base_value"],
+        np.array(shap_data["values"]),
+        feature_names=shap_data["features"]
+    )
+    st.pyplot(plt.gcf())
+    plt.close()
+
 
 # ===== Soumission prédiction =====
 if submitted:
@@ -109,83 +150,254 @@ if submitted:
         st.session_state.predicted = False
 
 # ===== Affichage des résultats =====
-col_left, col_right = st.columns([1, 1])
+col_left, col_right = st.columns([2, 3])
 
 # Colonne gauche - Toujours visible
 with col_left:
     st.subheader("📋 Infos Client")
-    
-    # Fonctions de formatage
-    # Fonctions de formatage
-    def safe_get(row, col, default="N/A"):
-        return row[col] if col in row and not pd.isna(row[col]) else default
-
-    def format_currency(value):
-        try:
-            return f"{float(value):,.0f} €"
-        except:
-            return "N/A"
-
-    def format_percentage(value):
-        try:
-            return f"{float(value)*100:.1f} %"
-        except:
-            return "N/A"
-
-    def format_gender(value):
-        return {1: "Homme", 0: "Femme"}.get(value, "Inconnu")
-
-    def format_years(value):
-        try:
-            return f"{-int(value)//365} ans"
-        except:
-            return "N/A"
 
     # Sélection d'une ligne par ID
-    row = df_test[df_test["SK_ID_CURR"] == selected_id].iloc[0]
+    #row = df_test[df_test["SK_ID_CURR"] == selected_id].iloc[0]
+    client_info = fetch_client_info(selected_id)
+    if client_info is not None:
+        row = pd.Series(client_info)
+    else:
+        st.stop()
+
+
+    def get_employment_type(row):
+        mapping = {
+            "NAME_INCOME_TYPE_PENSIONER": "Retraité",
+            "NAME_INCOME_TYPE_WORKING": "Salarié",
+            "NAME_INCOME_TYPE_STUDENT": "Étudiant",
+            "ORGANIZATION_TYPE_SELF_EMPLOYED": "Indépendant",
+            "ORGANIZATION_TYPE_MILITARY": "Militaire"
+        }
+        for col, label in mapping.items():
+            if safe_get(row, col) == 1:
+                return label
+        return "Autre"
+
+    def format_days_delay(value):
+        try:
+            if pd.isna(value) or value <= 0:
+                return "Aucun retard"
+            return f"{int(value)} jours de retard"
+        except:
+            return "N/A"
+
 
     # Dictionnaire des infos formatées
     infos = {
-        "ID Client": int(row["SK_ID_CURR"]),
-        "Âge": format_years(safe_get(row, "DAYS_BIRTH")),
-        "Genre": format_gender(safe_get(row, "CODE_GENDER")),
-        "Charge crédit": format_percentage(safe_get(row, "INCOME_CREDIT_PERC")),
-        "Historique crédit": format_years(safe_get(row, "BURO_DAYS_CREDIT_MEAN"))
-    }
+    "ID Client": int(row["SK_ID_CURR"]),
+    "Âge": format_years(safe_get(row, "DAYS_BIRTH")),
+    "Genre": format_gender(safe_get(row, "CODE_GENDER")),
+    "Type de logement": "Locataire" if safe_get(row, "NAME_HOUSING_TYPE_RENTED_APARTMENT") == 1 else "Autre",
+    "Statut marital": "Marié(e)" if safe_get(row, "NAME_FAMILY_STATUS_MARRIED") == 1 else "Autre",
+    "Type d'emploi": get_employment_type(row),
+    "Stabilité professionnelle": format_percentage(safe_get(row, "DAYS_EMPLOYED_PERC")),
+    "Revenu par personne": format_currency(safe_get(row, "INCOME_PER_PERSON")),
+    "Montant du crédit demandé": format_currency(safe_get(row, "AMT_CREDIT")),
+    "Charge crédit (revenu vs crédit)": format_percentage(safe_get(row, "INCOME_CREDIT_PERC")),
+    "Poids des remboursements sur le revenu": format_percentage(safe_get(row, "ANNUITY_INCOME_PERC")),
+    "Historique crédit (ancienneté moyenne)": format_years(safe_get(row, "BURO_DAYS_CREDIT_MEAN")),
+    "Dernier retard de paiement": format_days_delay(safe_get(row, "INSTAL_DBD_MAX")),
+}
+
 
     # Construction du DataFrame pour affichage
     df_infos = pd.DataFrame(list(infos.items()), columns=["Libellé", "Valeur"])
     df_infos["Valeur"] = df_infos["Valeur"].astype(str)  # 🔥 force explicite en string
-    #st.dataframe(df_infos)
-    AgGrid(df_infos, height=200, fit_columns_on_grid_load=True)
+    df_infos["Afficher"] = False  # Colonne pour checkboxes
+    # Construction du GridOptions
+    gb = GridOptionsBuilder.from_dataframe(df_infos)
+    gb.configure_column("Afficher", editable=True)  # rendre la colonne interactive
+    gb.configure_grid_options(domLayout='normal')
 
-    # --- Analyse SHAP Globale ---
+    grid_options = gb.build()
+
+    # Affichage interactif avec retour des valeurs modifiées
+    grid_response = AgGrid(
+        df_infos,
+        gridOptions=grid_options,
+        height=500,
+        update_mode=GridUpdateMode.MODEL_CHANGED,
+        fit_columns_on_grid_load=True,
+        allow_unsafe_jscode=True  # évite certains bugs liés à la JS marshalling
+    )
+
+    # DataFrame mis à jour par les interactions utilisateur
+    updated_df = grid_response['data']
+
+    genre_client = None
+    try:
+        genre_client = updated_df.loc[updated_df["Libellé"] == "Genre", "Valeur"].values[0]
+    except IndexError:
+        pass  # Par sécurité si jamais non trouvé
+
+    # Boucle sur les lignes cochées pour affichage de graphiques
+    for _, row in updated_df.iterrows():
+        if row["Afficher"]:
+            label = row["Libellé"]
+            valeur = row["Valeur"]
+
+            # ============================
+            # ÂGE
+            # ============================
+            if label == "Âge":
+                # Détermine le filtre genre
+                if genre_client == "Homme":
+                    population_df = df_test[df_test["CODE_GENDER"] == 1]
+                elif genre_client == "Femme":
+                    population_df = df_test[df_test["CODE_GENDER"] == 0]
+                else:
+                    population_df = df_test
+
+                client_age = float(valeur.split()[0])
+                population = population_df["DAYS_BIRTH"]
+                plot_boxplot_comparison(
+                    population_series=population,
+                    client_value=client_age,
+                    title=f"Âge du client (Genre: {genre_client})",
+                    xlabel="Âge (années)",
+                    unit=" ans",
+                    transform=lambda x: -x / 365
+                )
+
+            # ============================
+            # REVENU PAR PERSONNE
+            # ============================
+            elif label == "Revenu par personne":
+                client_val = float(valeur.replace("€", "").replace(" ", "").replace(",", "."))
+
+                # Vérifie si "Genre" est aussi affiché
+                genre_active = "Genre" in updated_df.loc[updated_df["Afficher"], "Libellé"].values
+
+                if genre_active:
+                    # Deux boxplots : homme vs femme
+                    df_filtered = df_test[["INCOME_PER_PERSON", "CODE_GENDER"]].dropna().copy()
+                    df_filtered["GENRE"] = df_filtered["CODE_GENDER"].map({1: "Homme", 0: "Femme"})
+
+                    fig, ax = plt.subplots(figsize=(8, 5))
+                    sns.boxplot(data=df_filtered, x="GENRE", y="INCOME_PER_PERSON", ax=ax)
+
+                    if genre_client in ["Homme", "Femme"]:
+                        pos_x = 0 if genre_client == "Homme" else 1
+                        ax.scatter(pos_x, client_val, color='red', zorder=10, s=100, label="Client")
+                        ax.legend()
+
+                    ax.set_title("Revenu par personne – comparaison genre")
+                    ax.set_xlabel("Genre")
+                    ax.set_ylabel("Revenu (€)")
+                    st.pyplot(fig)
+
+                else:
+                    # Filtré selon genre
+                    if genre_client == "Homme":
+                        population_df = df_test[df_test["CODE_GENDER"] == 1]
+                    elif genre_client == "Femme":
+                        population_df = df_test[df_test["CODE_GENDER"] == 0]
+                    else:
+                        population_df = df_test
+
+                    population = population_df["INCOME_PER_PERSON"]
+                    plot_boxplot_comparison(
+                        population_series=population,
+                        client_value=client_val,
+                        title=f"Revenu par personne (Genre: {genre_client})",
+                        xlabel="Revenu (€)",
+                        unit="€"
+                    )
+
+            # ============================
+            # STABILITÉ PROFESSIONNELLE
+            # ============================
+            elif label == "Stabilité professionnelle":
+                client_val = float(valeur.replace("%", "").replace(",", ".")) / 100
+                genre_active = "Genre" in updated_df.loc[updated_df["Afficher"], "Libellé"].values
+
+                if genre_active:
+                    df_filtered = df_test[["DAYS_EMPLOYED_PERC", "CODE_GENDER"]].dropna().copy()
+                    df_filtered["GENRE"] = df_filtered["CODE_GENDER"].map({1: "Homme", 0: "Femme"})
+
+                    fig, ax = plt.subplots(figsize=(8, 5))
+                    sns.boxplot(data=df_filtered, x="GENRE", y="DAYS_EMPLOYED_PERC", ax=ax)
+
+                    if genre_client in ["Homme", "Femme"]:
+                        pos_x = 0 if genre_client == "Homme" else 1
+                        ax.scatter(pos_x, client_val, color='red', zorder=10, s=100, label="Client")
+                        ax.legend()
+
+                    ax.set_title("Stabilité professionnelle – comparaison genre")
+                    ax.set_xlabel("Genre")
+                    ax.set_ylabel("Ratio emploi (%)")
+                    ax.set_ylim(0, 1)
+                    st.pyplot(fig)
+
+                else:
+                    if genre_client == "Homme":
+                        population_df = df_test[df_test["CODE_GENDER"] == 1]
+                    elif genre_client == "Femme":
+                        population_df = df_test[df_test["CODE_GENDER"] == 0]
+                    else:
+                        population_df = df_test
+
+                    population = population_df["DAYS_EMPLOYED_PERC"]
+                    plot_boxplot_comparison(
+                        population_series=population,
+                        client_value=client_val,
+                        title=f"Stabilité professionnelle (Genre: {genre_client})",
+                        xlabel="Pourcentage",
+                        unit="%",
+                        transform=lambda x: x * 100
+                    )
+
+
+
+        # --- Analyse SHAP Globale ---
     if st.session_state.predicted and st.session_state.show_shap:
         st.markdown("---")
         st.subheader("Analyse Globale")
         with st.spinner("Calcul des tendances globales..."):
             try:
-                # Création du graphique
-                plt.figure(figsize=(10, 6))
+                # Récupération des données brutes
+                response = requests.get(f"{API_URL}/global_shap_matrix?sample_size=1000")
+                response.raise_for_status()
+                data = response.json()
                 
-                # Version avec summary_plot seulement
+                # Conversion des données
+                shap_values = np.array(data['shap_values'])
+                feature_values = pd.DataFrame(data['feature_values'])
+                features = data['features']
+                base_value = data['base_value']
+                
+                # Création d'un array de base_values adapté
+                n_samples = shap_values.shape[0]
+                base_values = np.full(n_samples, base_value)  # <-- Correction clé
+                
+                # Création de l'objet Explanation
+                explanation = shap.Explanation(
+                    values=shap_values,
+                    base_values=base_values,  # Maintenant un array
+                    data=feature_values.values,
+                    feature_names=features
+                )
+                
+                # Génération du plot
+                plt.figure(figsize=(10, 6))
                 shap.summary_plot(
-                    global_shap_values,
-                    df_test_sample[features],
-                    plot_type="dot",  # ou "bar" selon votre préférence
-                    max_display=10,
+                    explanation,
+                    plot_type="dot",
                     show=False
                 )
                 
-                # Personnalisation du titre
-                plt.title("Impact Global des Variables\n(Rouge=Augmente le risque, Bleu=Diminue le risque)", pad=20)
-                
-                # Affichage
+                # Personnalisation
+                plt.title("Impact Global des Variables", pad=20)
                 st.pyplot(plt.gcf())
                 plt.close()
                 
             except Exception as e:
-                st.error(f"Erreur analyse globale : {str(e)}")
+                st.error(f"Erreur : {str(e)}")
 # Colonne droite - Résultats prédiction
 with col_right:
     #st.subheader("Analyse du risque client")
@@ -225,11 +437,6 @@ with col_right:
                         columns=features,
                         index=X.index
                     )
-
-                    #shap_values = explainer(X_scaled)
-                    #fig, ax = plt.subplots(figsize=(10, 6))
-                    #shap.plots.bar(shap_values[0], max_display=10, show=False)
-                    #st.pyplot(fig)
 
                     shap_values = explainer(X_scaled)
                     fig, ax = plt.subplots(figsize=(10, 6))
