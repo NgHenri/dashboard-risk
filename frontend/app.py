@@ -19,6 +19,14 @@ import pandas as pd
 from st_aggrid import AgGrid, JsCode, GridOptionsBuilder, GridUpdateMode
 from st_aggrid.grid_options_builder import GridOptionsBuilder
 from utils.visuals import plot_boxplot_comparison
+from dotenv import load_dotenv
+import os
+
+#load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
+load_dotenv()
+
+API_URL = os.getenv("API_URL")
+API_KEY = os.getenv("API_KEY")
 
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -73,10 +81,6 @@ def fetch_client_info(client_id):
         return None
 
 client_ids = fetch_client_ids()
-
-
-#client_ids = df_test["SK_ID_CURR"].unique().astype(int)
-
 # ===== Sidebar =====
 st.sidebar.markdown("## 🔍 Analyse d'un client")
 selected_id = st.sidebar.selectbox("Sélectionner un client", client_ids)
@@ -111,7 +115,7 @@ if st.session_state.previous_id != selected_id:
         del st.session_state.current_animated_id
     st.session_state.previous_id = selected_id
 
-# ==== visu =======    
+# ==== Visualisation =======    
 def plot_shap_waterfall(shap_data):
     plt.figure(figsize=(10, 6))
     shap.plots._waterfall.waterfall_legacy(
@@ -156,8 +160,6 @@ col_left, col_right = st.columns([2, 3])
 with col_left:
     st.subheader("📋 Infos Client")
 
-    # Sélection d'une ligne par ID
-    #row = df_test[df_test["SK_ID_CURR"] == selected_id].iloc[0]
     client_info = fetch_client_info(selected_id)
     if client_info is not None:
         row = pd.Series(client_info)

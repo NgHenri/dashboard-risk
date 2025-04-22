@@ -11,6 +11,12 @@ import warnings
 import logging  
 import sys
 
+load_dotenv()
+#load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
+
+API_KEY = os.getenv("API_KEY")
+API_URL = os.getenv("API_URL")
+
 # === 2. Configuration globale ===
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -123,6 +129,26 @@ def get_client_info(client_id: int):
             status_code=500,
             detail="Erreur technique - contactez l'administrateur"
         )
+# ========== ALL DATA ======
+
+@st.cache_data
+def load_test_data_from_api():
+    if not API_KEY or not API_URL:
+        st.error("Clé API ou URL manquante dans le fichier .env.")
+        return pd.DataFrame()
+
+    try:
+        headers = {"x-api-key": API_KEY}
+        response = requests.get(f"{API_URL}/get_test_data", headers=headers)
+        if response.status_code == 200:
+            data = response.json()
+            return pd.DataFrame(data)
+        else:
+            st.error(f"Erreur API : {response.status_code} - {response.text}")
+            return pd.DataFrame()
+    except Exception as e:
+        st.error(f"Exception lors de la requête API : {e}")
+        return pd.DataFrame()
 
 # ===========
 
