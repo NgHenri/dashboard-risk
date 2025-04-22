@@ -10,12 +10,19 @@ import pandas as pd
 import warnings
 import logging  
 import sys
+import os
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-load_dotenv()
+
+#load_dotenv()
 #load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
 
-API_KEY = os.getenv("API_KEY")
-API_URL = os.getenv("API_URL")
+#API_KEY = os.getenv("API_KEY")
+#API_URL = os.getenv("API_URL")
+
+API_URL = "http://localhost:8000"
+API_KEY = "b678481b982dc71ab46e08255faefae5f73339c4f1339eec83edf10488502158"
 
 # === 2. Configuration globale ===
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -29,6 +36,15 @@ logger.addHandler(handler)
 
 # === 4. Initialisation FastAPI ===
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Remplace "*" par les origines que tu veux autoriser
+    allow_credentials=True,
+    allow_methods=["*"],  # Autorise toutes les méthodes HTTP
+    allow_headers=["*"],  # Autorise tous les en-têtes
+)
+
 
 # === 5. Chargement des artefacts ===
 ARTIFACT_PATH = "models/lightgbm_production_artifact_20250415_081218.pkl"
@@ -116,7 +132,8 @@ def get_client_info(client_id: int):
     - **client_id** : Identifiant unique du client (ex: 100001)
     """
     try:
-        client_data: DataFrame = full_df[full_df["SK_ID_CURR"] == client_id]
+        #client_data: DataFrame = full_df[full_df["SK_ID_CURR"] == client_id]
+        client_data = full_df.loc[full_df["SK_ID_CURR"] == client_id].copy()
         
         if client_data.empty:
             raise HTTPException(status_code=404, detail="Client introuvable")
@@ -131,24 +148,7 @@ def get_client_info(client_id: int):
         )
 # ========== ALL DATA ======
 
-@st.cache_data
-def load_test_data_from_api():
-    if not API_KEY or not API_URL:
-        st.error("Clé API ou URL manquante dans le fichier .env.")
-        return pd.DataFrame()
 
-    try:
-        headers = {"x-api-key": API_KEY}
-        response = requests.get(f"{API_URL}/get_test_data", headers=headers)
-        if response.status_code == 200:
-            data = response.json()
-            return pd.DataFrame(data)
-        else:
-            st.error(f"Erreur API : {response.status_code} - {response.text}")
-            return pd.DataFrame()
-    except Exception as e:
-        st.error(f"Exception lors de la requête API : {e}")
-        return pd.DataFrame()
 
 # ===========
 

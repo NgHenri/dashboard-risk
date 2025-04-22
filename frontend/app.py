@@ -23,17 +23,29 @@ from dotenv import load_dotenv
 import os
 
 #load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
-load_dotenv()
+#load_dotenv()
 
-API_URL = os.getenv("API_URL")
-API_KEY = os.getenv("API_KEY")
+#API_URL = os.getenv("API_URL")
+#API_KEY = os.getenv("API_KEY")
 
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 API_URL = "http://localhost:8000"
+API_KEY="b678481b982dc71ab46e08255faefae5f73339c4f1339eec83edf10488502158"
 ARTIFACT_PATH = "../backend/models/lightgbm_production_artifact_20250415_081218.pkl"
 THRESHOLD = 0.0931515  # Seuil de risque
+
+def check_api_health():
+    try:
+        response = requests.get(f"{API_URL}/health", timeout=3)
+        return response.status_code == 200
+    except:
+        return False
+
+if not check_api_health():
+    st.error("L'API n'est pas disponible. Veuillez démarrer le backend.")
+    st.stop()
 
 st.set_page_config(layout="wide")
 st.title("🏦 Dashboard Crédit - Prédictions & Explicabilité")
@@ -63,27 +75,56 @@ model, scaler, features, explainer, global_shap_values, df_test_sample = load_mo
 
 # ===== Fonctions de service =====
 @st.cache_data
+def load_test_data_from_api():
+    if not API_KEY or not API_URL:
+        st.error("Clé API ou URL manquante dans le fichier .env.")
+        return pd.DataFrame()
+
+    try:
+        headers = {"x-api-key": API_KEY}
+        response = requests.get(f"{API_URL}/get_test_data", headers=headers)
+        if response.status_code == 200:
+            data = response.json()
+            return pd.DataFrame(data)
+        else:
+            st.error(f"Erreur API : {response.status_code} - {response.text}")
+            return pd.DataFrame()
+    except Exception as e:
+        st.error(f"Exception lors de la requête API : {e}")
+        return pd.DataFrame()
+
+
+@st.cache_data
 def fetch_client_ids():
     try:
-        response = requests.get(f"{API_URL}/client_ids")
-        return response.json()["client_ids"]
+        response = requests.get(f"{API_URL}/client_ids", timeout=0.05)
+        if response.status_code == 200:
+            return response.json().get("client_ids", [])
+        return []
     except Exception as e:
-        st.error(f"Erreur récupération IDs : {str(e)}")
+        st.error(f"API non disponible : {str(e)}")
         return []
 
 def fetch_client_info(client_id):
     try:
-        response = requests.get(f"{API_URL}/client_info/{client_id}")
+        response = requests.get(
+            f"{API_URL}/client_info/{client_id}",
+            timeout=5  # 5 secondes max
+        )
         response.raise_for_status()
         return response.json()
-    except Exception as e:
-        st.error(f"Erreur infos client : {str(e)}")
+    except requests.exceptions.RequestException as e:
+        st.error(f"Erreur API : {str(e)}")
         return None
 
 client_ids = fetch_client_ids()
+
 # ===== Sidebar =====
 st.sidebar.markdown("## 🔍 Analyse d'un client")
 selected_id = st.sidebar.selectbox("Sélectionner un client", client_ids)
+if not selected_id or not isinstance(selected_id, int):
+    st.warning("Veuillez sélectionner un client valide")
+    st.stop()
 submitted = st.sidebar.button("Soumettre la prédiction")
 
 # Gestion de la checkbox SHAP via session state
@@ -129,8 +170,15 @@ def plot_shap_waterfall(shap_data):
 
 # ===== Soumission prédiction =====
 if submitted:
-    client_row = df_test[df_test["SK_ID_CURR"] == selected_id]
-    
+    #client_row = df_test[df_test["SK_ID_CURR"] == selected_id]
+    client_info = fetch_client_info(selected_id)
+    if not client_info:
+        st.error("Données client non disponibles")
+        st.stop()
+
+    # Conversion en DataFrame
+    client_row = pd.DataFrame([client_info])
+
     if not client_row.empty:
         try:
             client_data = client_row.drop(columns=["SK_ID_CURR"]).to_dict(orient="records")[0]
@@ -161,6 +209,7 @@ with col_left:
     st.subheader("📋 Infos Client")
 
     client_info = fetch_client_info(selected_id)
+
     if client_info is not None:
         row = pd.Series(client_info)
     else:
@@ -188,6 +237,9 @@ with col_left:
         except:
             return "N/A"
 
+    # Sélection d'une ligne par ID
+
+    #row = df_test[df_test["SK_ID_CURR"] == selected_id].iloc[0]
 
     # Dictionnaire des infos formatées
     infos = {
