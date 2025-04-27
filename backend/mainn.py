@@ -22,13 +22,6 @@ from fastapi_cache.decorator import cache
 from fastapi import Security, Depends
 from fastapi.security import APIKeyHeader
 
-
-#load_dotenv()
-#load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
-
-#API_KEY = os.getenv("API_KEY")
-#API_URL = os.getenv("API_URL")
-
 API_URL = "http://localhost:8000"
 API_KEY = "b678481b982dc71ab46e08255faefae5f73339c4f1339eec83edf10488502158"
 
@@ -66,6 +59,7 @@ async def startup():
     redis = aioredis.from_url("redis://localhost:6379")
     FastAPICache.init(RedisBackend(redis), prefix="api-cache")
 
+
 # === 5. Chargement des artefacts ===
 ARTIFACT_PATH = "models/lightgbm_production_artifact_20250415_081218.pkl"
 try:
@@ -82,42 +76,40 @@ except Exception as e:
 # === 6. Initialisation SHAP ===
 explainer = shap.Explainer(model)
 logger.info(f"Type de expected_value: {type(explainer.expected_value)}")
-logger.info(f"Valeur de expected_value: {explainer.expected_value}")
+logger.info(f"Valeur de expected_value: {explainer.expected_value}")    
 
-# === 7. Chargement des données globales ===
-GLOBAL_DATA_PATH = "../backend/data/test_2000_sample_for_api.csv"  # Chemin corrigé
+
+# === 7. Chargement et prétraitement des données globales ====
+GLOBAL_DATA_PATH = "../backend/data/test_2000_sample_for_api.csv"
 try:
     df_global = pd.read_csv(GLOBAL_DATA_PATH)[features]
-    df_global_scaled = scaler.transform(df_global)  # Doit être un array numpy 2D
+    df_global_scaled = scaler.transform(df_global)
     assert df_global_scaled.shape[1] == len(features), "Incohérence features/scaler !"
     logger.info("Données globales chargées et prétraitées.")
 except Exception as e:
     logger.critical(f"Erreur de chargement ou traitement des données globales : {e}")
     raise RuntimeError("Échec de la préparation des données globales.")
 
-# === 8. Calcul SHAP global dès le démarrage ===
+# === 8. Calcul SHAP global ===
 try:
     global_shap_values = explainer.shap_values(df_global_scaled)
-    if isinstance(global_shap_values, list):  # Cas classification binaire
-        global_shap_values = global_shap_values[1]  # Garder seulement la classe positive
-    
-    # === VÉRIFICATION PRIMAIRE ===
-    assert len(df_global) == global_shap_values.shape[0], \
+    if isinstance(global_shap_values, list):  # Classification binaire
+        global_shap_values = global_shap_values[1]
+
+    # === VÉRIFICATION PRIMAIRE ===    
+    assert len(df_global) == global_shap_values.shape[0], (
         f"Données/SHAP incohérents ({len(df_global)} vs {global_shap_values.shape[0]})"
-    
+    )
     global_shap_mean = global_shap_values.mean(axis=0)
 except Exception as e:
     logger.critical(f"Erreur calcul SHAP global : {str(e)}")
     raise RuntimeError("Impossible de calculer les SHAP globaux")
 
-# === VÉRIFICATION REDONDANTE POUR SÉCURITÉ ===
+# === VÉRIFICATION SECONDAIRE ===
 global_shap_matrix = global_shap_values
-assert len(df_global) == len(global_shap_matrix), \
+assert len(df_global) == len(global_shap_matrix), (
     f"Données/SHAP incohérents ({len(df_global)} vs {len(global_shap_matrix)})"
-
-# Après le précalcul
-print(f"Type SHAP global : {type(global_shap_values)}")
-print(f"Shape SHAP global : {global_shap_values.shape}")
+)
 
 # === 9. Liste des clients ===
 try:
@@ -128,6 +120,86 @@ except Exception as e:
     logger.critical(f"Échec du chargement des données : {str(e)}")
     raise RuntimeError("Impossible de démarrer l'API - données corrompues")
 
+# === 10. Centralisation des métadonnées ===
+metadata = {
+    "features": features,
+    "threshold": threshold,
+    "base_value": float(
+        explainer.expected_value[1]
+        if isinstance(explainer.expected_value, (list, np.ndarray))
+        else explainer.expected_value
+    )
+}
+
+@app.get("/metadata")
+def get_metadata():
+    """
+    Renvoie les métadonnées communes :
+      - features : liste des features
+      - threshold : seuil optimal défini lors du training
+      - base_value : valeur de base du modèle via SHAP
+    """
+    return metadata
+
+# Endpoint avec cache (1 heure) via fastapi-cache
+@app.get("/global_features")
+@cache(expire=3600)
+def get_global_features(top_n: int = 10):
+    """
+    Renvoie les features ayant le plus grand impact moyen (directionnel) sur les prédictions du modèle.
+
+    Le score moyen est calculé à partir des valeurs SHAP sur l'ensemble global des données.
+    Chaque feature est associée à :
+    - son impact moyen (positif ou négatif)
+    - sa direction d'influence (positive = favorise l'acceptation, négative = favorise le refus)
+
+    """
+    try:
+        features_sorted = sorted(
+            zip(metadata["features"], global_shap_mean),
+            key=lambda x: abs(x[1]),
+            reverse=True
+        )[:top_n]
+        
+        return {
+            "global_importances": [
+                {
+                    "feature": feat,
+                    "impact": round(float(impact), 4),
+                    "direction": "positive" if impact > 0 else "negative"
+                }
+                for feat, impact in features_sorted
+            ]
+        }
+    except Exception as e:
+        logger.error(f"Erreur /global_features : {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Erreur interne lors du calcul des SHAP globaux : {str(e)}")
+
+@app.get("/global_shap_matrix")
+@cache(expire=3600)
+def get_global_shap_matrix(sample_size: int = 1000, random_state: int = 42):
+    """
+    Renvoie un échantillon des valeurs SHAP globales et les données réelles associées.
+    """
+    try:
+        sample_size = min(sample_size, len(global_shap_matrix))
+        rng = np.random.default_rng(seed=random_state)
+        sample_idx = rng.choice(len(global_shap_matrix), sample_size, replace=False)
+        
+        return {
+            "shap_values": global_shap_matrix[sample_idx].tolist(),
+            "feature_values": df_global.iloc[sample_idx].to_dict(orient="records"),
+            "metadata": metadata
+        }
+    except Exception as e:
+        logger.error(f"Erreur /global_shap_matrix : {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Erreur de traitement des données globales")
+
+# === Initialisation du cache Redis au démarrage ===
+@app.on_event("startup")
+async def startup():
+    redis = aioredis.from_url("redis://localhost:6379", encoding="utf8", decode_responses=True)
+    FastAPICache.init(RedisBackend(redis), prefix="fastapi-cache")
 
 #==============    
 
@@ -379,88 +451,33 @@ def get_local_shap(client: ClientData):
         logger.error(f"Erreur SHAP locale : {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Erreur de calcul SHAP")
 
-
-@cache(expire=3600)  # Cache 1 heure
-@app.get("/global_features")
-def get_global_features(top_n: int = 10):
-    """Renvoie les features ayant le plus grand impact moyen (directionnel) sur les prédictions du modèle.
-
-    Le score moyen est calculé à partir des valeurs SHAP sur l'ensemble global des données.
-    Chaque feature est associée à :
-    - son impact moyen (positif ou négatif)
-    - sa direction d'influence (positive = favorise l'acceptation, négative = favorise le refus)
-
-    Args:
-        top_n (int): nombre de features à retourner (classées par importance décroissante)
-
-    Returns:
-        dict: {
-            "global_importances": [
-                {
-                    "feature": nom de la feature,
-                    "impact": valeur moyenne (signée) de SHAP,
-                    "direction": "positive" ou "negative"
-                },
-                ...
-            ]
-        }"""
+    
+@app.get("/shap/local/{client_id}")
+async def get_local_shap(client_id: int):
+    """Calcule les valeurs SHAP locales pour un client spécifique"""
     try:
-        features_sorted = sorted(
-            zip(features, global_shap_mean), 
-            key=lambda x: abs(x[1]), 
-            reverse=True
-        )[:top_n]
+        # Récupération des données client
+        client_data = full_df[full_df["SK_ID_CURR"] == client_id][features]
+        if client_data.empty:
+            raise HTTPException(status_code=404, detail="Client introuvable")
+        
+        # Prétraitement des données
+        X_scaled = scaler.transform(client_data.values.reshape(1, -1))
+        
+        # Calcul SHAP
+        shap_values = explainer.shap_values(X_scaled)
+        base_value = explainer.expected_value[1] if isinstance(explainer.expected_value, list) else explainer.expected_value
         
         return {
-            "global_importances": [
-                {
-                    "feature": feat, 
-                    "impact": round(float(impact), 4),
-                    "direction": "positive" if impact > 0 else "negative"
-                } for feat, impact in features_sorted
-            ]
-        }
-    except Exception as e:
-        logger.error(f"Erreur /global_features : {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Erreur interne lors du calcul des SHAP globaux : {str(e)}")
-
-# Au démarrage
-global_shap_matrix = global_shap_values  # Déjà calculé
-
-@app.get("/global_shap_matrix")
-@cache(expire=3600)
-def get_global_shap_matrix(
-    sample_size: int = 1000,
-    random_state: int = 42,
-    long_format: Optional[bool] = Query(False, description="Retourne un format long si True")
-):
-    try:
-        sample_size = min(sample_size, len(global_shap_matrix))
-        rng = np.random.default_rng(seed=random_state)
-        sample_idx = rng.choice(len(global_shap_matrix), sample_size, replace=False)
-
-        shap_sample = global_shap_matrix[sample_idx]
-        feature_sample = df_global.iloc[sample_idx]
-
-        if long_format:
-            df_long = get_shap_long_dataframe(shap_sample, feature_sample[features])
-            return df_long.to_dict(orient="records")
-
-        return {
-            "shap_values": shap_sample.tolist(),
-            "feature_values": feature_sample.to_dict(orient="records"),
+            "values": shap_values[0].tolist(),
+            "base_value": float(base_value),
             "features": features,
-            "base_value": float(
-                explainer.expected_value[1]
-                if isinstance(explainer.expected_value, list)
-                else explainer.expected_value
-            ),
+            "client_data": client_data.iloc[0].to_dict()
         }
+        
     except Exception as e:
-        logger.error(f"Erreur globale_shap_matrix : {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Erreur de traitement des données globales")
-
-
+        logger.error(f"Erreur SHAP locale : {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/health")
@@ -492,31 +509,3 @@ def health_check():
         checks["status"] = "⚠️ API partiellement opérationnelle"
     
     return checks
-    
-@app.get("/shap/local/{client_id}")
-async def get_local_shap(client_id: int):
-    """Calcule les valeurs SHAP locales pour un client spécifique"""
-    try:
-        # Récupération des données client
-        client_data = full_df[full_df["SK_ID_CURR"] == client_id][features]
-        if client_data.empty:
-            raise HTTPException(status_code=404, detail="Client introuvable")
-        
-        # Prétraitement des données
-        X_scaled = scaler.transform(client_data.values.reshape(1, -1))
-        
-        # Calcul SHAP
-        shap_values = explainer.shap_values(X_scaled)
-        base_value = explainer.expected_value[1] if isinstance(explainer.expected_value, list) else explainer.expected_value
-        
-        return {
-            "values": shap_values[0].tolist(),
-            "base_value": float(base_value),
-            "features": features,
-            "client_data": client_data.iloc[0].to_dict(),
-            "feature_names": list(features),
-        }
-        
-    except Exception as e:
-        logger.error(f"Erreur SHAP locale : {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))

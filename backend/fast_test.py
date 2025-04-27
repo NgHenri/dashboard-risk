@@ -12,8 +12,6 @@ import logging
 import sys
 import os
 from fastapi import FastAPI
-from fastapi import Query
-from typing import Optional
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi_cache import FastAPICache
 from fastapi_cache.backends.redis import RedisBackend
@@ -106,6 +104,7 @@ try:
         f"Données/SHAP incohérents ({len(df_global)} vs {global_shap_values.shape[0]})"
     
     global_shap_mean = global_shap_values.mean(axis=0)
+
 except Exception as e:
     logger.critical(f"Erreur calcul SHAP global : {str(e)}")
     raise RuntimeError("Impossible de calculer les SHAP globaux")
@@ -129,6 +128,9 @@ except Exception as e:
     raise RuntimeError("Impossible de démarrer l'API - données corrompues")
 
 
+# Après le chargement du modèle
+assert hasattr(explainer, "expected_value"), "Explainer mal initialisé"
+assert len(features) == len(global_shap_mean), "Incohérence features/shap values"
 #==============    
 
 @app.get("/get_test_data")
@@ -145,8 +147,10 @@ async def get_test_data(_: str = Depends(validate_api_key)):
         logger.error(f"Erreur get_test_data : {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Erreur de chargement des données")
 
+
 @app.post("/population_stats")
-def get_population_stats(feature_request: dict):
+@cache(expire=3600)
+async def get_population_stats(feature_request: dict):
     """
     Calcule les statistiques de population pour une feature donnée
     Format attendu :
@@ -193,7 +197,9 @@ def get_population_stats(feature_request: dict):
 def get_client_shap_data(client_id: int):
     """Renvoie les données brutes nécessaires au calcul SHAP pour un client"""
     try:
-        client_data = full_df[full_df["SK_ID_CURR"] == client_id][features]
+        cols = ["SK_ID_CURR"] + features  # on ajoute explicitement SK_ID_CURR
+        client_data = full_df[full_df["SK_ID_CURR"] == client_id][cols]
+        
         if client_data.empty:
             raise HTTPException(status_code=404, detail="Client introuvable")
             
@@ -201,6 +207,16 @@ def get_client_shap_data(client_id: int):
     except Exception as e:
         logger.error(f"Erreur client_shap_data : {str(e)}")
         raise HTTPException(status_code=500, detail="Erreur technique")
+
+
+@app.get("/features")
+@cache(expire=3600)
+def get_features():
+    """Renvoie la liste des features utilisées par le modèle"""
+    try:
+        return {"features": features.tolist()}  # Si features est un numpy array
+    except AttributeError:
+        return {"features": features}  # Si features est une liste Python        
 
 # ============ IDS Client =====================
 
@@ -333,7 +349,6 @@ def explain(client: ClientData):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Erreur dans l'explication : {str(e)}")
 
-
 @app.post("/shap/local")
 def get_local_shap(client: ClientData):
     """Calcule les valeurs SHAP locales"""
@@ -378,6 +393,35 @@ def get_local_shap(client: ClientData):
     except Exception as e:
         logger.error(f"Erreur SHAP locale : {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Erreur de calcul SHAP")
+
+
+
+@app.get("/shap/local/{client_id}")
+async def get_local_shap(client_id: int):
+    """Calcule les valeurs SHAP locales pour un client spécifique"""
+    try:
+        # Récupération des données client
+        client_data = full_df[full_df["SK_ID_CURR"] == client_id][features]
+        if client_data.empty:
+            raise HTTPException(status_code=404, detail="Client introuvable")
+        
+        # Prétraitement des données
+        X_scaled = scaler.transform(client_data.values.reshape(1, -1))
+        
+        # Calcul SHAP
+        shap_values = explainer.shap_values(X_scaled)
+        base_value = explainer.expected_value[1] if isinstance(explainer.expected_value, list) else explainer.expected_value
+        
+        return {
+            "values": shap_values[0].tolist(),
+            "base_value": float(base_value),
+            "features": features,
+            "client_data": client_data.iloc[0].to_dict()
+        }
+        
+    except Exception as e:
+        logger.error(f"Erreur SHAP locale : {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @cache(expire=3600)  # Cache 1 heure
@@ -428,38 +472,22 @@ def get_global_features(top_n: int = 10):
 global_shap_matrix = global_shap_values  # Déjà calculé
 
 @app.get("/global_shap_matrix")
-@cache(expire=3600)
-def get_global_shap_matrix(
-    sample_size: int = 1000,
-    random_state: int = 42,
-    long_format: Optional[bool] = Query(False, description="Retourne un format long si True")
-):
+@cache(expire=3600)  # 🔁 Cache 1h
+def get_global_shap_matrix(sample_size: int = 1000, random_state: int = 42):
     try:
         sample_size = min(sample_size, len(global_shap_matrix))
         rng = np.random.default_rng(seed=random_state)
         sample_idx = rng.choice(len(global_shap_matrix), sample_size, replace=False)
-
-        shap_sample = global_shap_matrix[sample_idx]
-        feature_sample = df_global.iloc[sample_idx]
-
-        if long_format:
-            df_long = get_shap_long_dataframe(shap_sample, feature_sample[features])
-            return df_long.to_dict(orient="records")
-
+        
         return {
-            "shap_values": shap_sample.tolist(),
-            "feature_values": feature_sample.to_dict(orient="records"),
+            "shap_values": global_shap_matrix[sample_idx].tolist(),
+            "feature_values": df_global.iloc[sample_idx].to_dict(orient="records"),
             "features": features,
-            "base_value": float(
-                explainer.expected_value[1]
-                if isinstance(explainer.expected_value, list)
-                else explainer.expected_value
-            ),
+            "base_value": float(explainer.expected_value[1] if isinstance(explainer.expected_value, list) else explainer.expected_value)
         }
     except Exception as e:
         logger.error(f"Erreur globale_shap_matrix : {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Erreur de traitement des données globales")
-
 
 
 
@@ -492,31 +520,3 @@ def health_check():
         checks["status"] = "⚠️ API partiellement opérationnelle"
     
     return checks
-    
-@app.get("/shap/local/{client_id}")
-async def get_local_shap(client_id: int):
-    """Calcule les valeurs SHAP locales pour un client spécifique"""
-    try:
-        # Récupération des données client
-        client_data = full_df[full_df["SK_ID_CURR"] == client_id][features]
-        if client_data.empty:
-            raise HTTPException(status_code=404, detail="Client introuvable")
-        
-        # Prétraitement des données
-        X_scaled = scaler.transform(client_data.values.reshape(1, -1))
-        
-        # Calcul SHAP
-        shap_values = explainer.shap_values(X_scaled)
-        base_value = explainer.expected_value[1] if isinstance(explainer.expected_value, list) else explainer.expected_value
-        
-        return {
-            "values": shap_values[0].tolist(),
-            "base_value": float(base_value),
-            "features": features,
-            "client_data": client_data.iloc[0].to_dict(),
-            "feature_names": list(features),
-        }
-        
-    except Exception as e:
-        logger.error(f"Erreur SHAP locale : {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))

@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 import shap
-import matplotlib.pyplot as plt
+from matplotlib import pyplot as plt
 import warnings
 import joblib
 import config
@@ -13,20 +13,27 @@ from utils.formatters import (
     format_gender, format_years
 )
 from utils.styling import style_rules, build_dynamic_styling
-from matplotlib import pyplot as plt
+from utils.shap_utils import get_top_positive_negative_features
+
 import seaborn as sns
-import pandas as pd
 from st_aggrid import AgGrid, JsCode, GridOptionsBuilder, GridUpdateMode
-from st_aggrid.grid_options_builder import GridOptionsBuilder
-from utils.visuals import plot_boxplot_comparison
+from utils.visuals import( 
+    plot_boxplot_comparison, plot_waterfall_chart,plot_summary_chart,
+    get_title_font_size, plot_feature_distribution, plot_shap_by_decision, plot_shap_histogram
+)
 from dotenv import load_dotenv
 import os
+import logging 
+import json
+
+
 
 #load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
 #load_dotenv()
 
 #API_URL = os.getenv("API_URL")
 #API_KEY = os.getenv("API_KEY")
+
 
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -35,26 +42,80 @@ API_URL = "http://localhost:8000"
 API_KEY="b678481b982dc71ab46e08255faefae5f73339c4f1339eec83edf10488502158"
 ARTIFACT_PATH = "../backend/models/lightgbm_production_artifact_20250415_081218.pkl"
 THRESHOLD = 0.0931515  # Seuil de risque
+TIMEOUT = 10  # seconds
 
+# 1. Fonction de vérification
 def check_api_health():
     try:
-        response = requests.get(f"{API_URL}/health", timeout=3)
-        return response.status_code == 200
-    except:
+        response = requests.get(f"{API_URL}/health", timeout=TIMEOUT)
+        if response.status_code != 200:
+            st.error(f"API retourne {response.status_code}")
+            return False
+        return True
+    except Exception as e:
+        st.error(f"L'API semble indisponible : {str(e)}")
         return False
 
+# 2. Dans votre code principal :
 if not check_api_health():
-    st.error("L'API n'est pas disponible. Veuillez démarrer le backend.")
+    st.error("Connexion API impossible - Vérifiez que le backend est démarré")
     st.stop()
 
 st.set_page_config(layout="wide")
 st.title("🏦 Dashboard Crédit - Prédictions & Explicabilité")
 
-# ===== Chargement des données =====
-@st.cache_data
-def load_test_data():
-    return pd.read_csv("../backend/data/test_2000_sample_for_api.csv")
 
+# ------------------ Main App UI ------------------ #
+
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["Threat Model", "Attack Tree", "Mitigations", "DREAD", "Test Cases"])
+
+# ===== Chargement des données =====
+
+# la fonction de chargement des données
+@st.cache_data
+def load_test_data_from_api():
+    """Récupère les données de test via l'API"""
+    try:
+        headers = {
+            "x-api-key": API_KEY,
+            "Accept": "application/json"
+        }
+        
+        # Test de connexion basique
+        health_response = requests.get(f"{API_URL}/health")
+        if health_response.status_code != 200:
+            st.error("L'API ne répond pas correctement")
+            return pd.DataFrame()
+        
+        # Requête principale
+        response = requests.get(
+            f"{API_URL}/get_test_data",
+            headers=headers,
+            timeout=TIMEOUT
+        )
+        
+        # Gestion spécifique des erreurs 403
+        if response.status_code == 403:
+            st.error("Permission refusée - Vérifiez la clé API")
+            logger.error(f"Headers envoyés : {headers}")
+            return pd.DataFrame()
+            
+        response.raise_for_status()
+        
+        return pd.DataFrame(response.json())
+        
+    except Exception as e:
+        st.error(f"Erreur critique : {str(e)}")
+        return pd.DataFrame()
+
+# Chargement des données via l'API
+df_test = load_test_data_from_api()
+
+if df_test.empty:
+    st.error("Erreur lors du chargement des données depuis l'API")
+    st.stop()
+
+# la fonction de chargement des artefacts
 @st.cache_resource
 def load_model_artifacts():
     artifacts = joblib.load(ARTIFACT_PATH)
@@ -63,41 +124,85 @@ def load_model_artifacts():
     features = artifacts['metadata']['features']
     explainer = shap.TreeExplainer(model)
     
-    # Précalcul des SHAP values globales (échantillonné pour plus de rapidité)
-    df_test_sample = df_test[features].sample(min(1000, len(df_test)), random_state=42)
-    df_test_sample_scaled = scaler.transform(df_test_sample)
+    # Récupération des données via l'API pour SHAP global
+    try:
+        response = requests.get(
+            f"{API_URL}/global_shap_sample",
+            headers={"x-api-key": API_KEY},
+            timeout=TIMEOUT
+        )
+        response.raise_for_status()
+        df_test_sample = pd.DataFrame(response.json())
+    except Exception as e:
+        st.error(f"Erreur API : {str(e)}")
+        st.stop()
+    
+    # Calcul des SHAP values
+    df_test_sample_scaled = scaler.transform(df_test_sample[features])
     global_shap_values = explainer.shap_values(df_test_sample_scaled)
     
     return model, scaler, features, explainer, global_shap_values, df_test_sample
 
-df_test = load_test_data()
+# Chargement des données via l'API
 model, scaler, features, explainer, global_shap_values, df_test_sample = load_model_artifacts()
 
 # ===== Fonctions de service =====
-@st.cache_data
-def load_test_data_from_api():
-    if not API_KEY or not API_URL:
-        st.error("Clé API ou URL manquante dans le fichier .env.")
-        return pd.DataFrame()
 
+# Mettre à jour les appels dans les visualisations
+def update_comparison_plots(updated_df, genre_client):
+    for _, row in updated_df.iterrows():
+        if row["Afficher"]:
+            label = row["Libellé"]
+            valeur = row["Valeur"]
+
+            # Récupération des données de comparaison via API
+            try:
+                response = requests.post(
+                    f"{API_URL}/population_stats",
+                    json={
+                        "feature": label,
+                        "filters": {"genre": genre_client} if genre_client else {}
+                    },
+                    headers={"x-api-key": API_KEY},
+                    timeout=TIMEOUT
+                )
+                response.raise_for_status()
+                stats = response.json()
+                
+                # Création du graphique avec les données de l'API
+                plot_boxplot_comparison(
+                    population_stats=stats,
+                    client_value=parse_client_value(valeur, label),
+                    title=f"Comparaison pour {label}",
+                    unit=get_unit_for_label(label)
+                )
+                
+            except Exception as e:
+                st.error(f"Erreur API : {str(e)}")
+
+def fetch_client_shap_data(client_id):
+    response = requests.get(f"{API_URL}/client_shap_data/{client_id}")
+    return response.json()  
+
+
+def fetch_client_data_for_shap(client_id):
+    """Récupère les données formatées pour le calcul SHAP"""
     try:
-        headers = {"x-api-key": API_KEY}
-        response = requests.get(f"{API_URL}/get_test_data", headers=headers)
-        if response.status_code == 200:
-            data = response.json()
-            return pd.DataFrame(data)
-        else:
-            st.error(f"Erreur API : {response.status_code} - {response.text}")
-            return pd.DataFrame()
+        response = requests.get(
+            f"{API_URL}/client_shap_data/{client_id}",
+            headers={"x-api-key": API_KEY},
+            timeout=TIMEOUT
+        )
+        response.raise_for_status()
+        return pd.DataFrame([response.json()])
     except Exception as e:
-        st.error(f"Exception lors de la requête API : {e}")
+        st.error(f"Erreur API : {str(e)}")
         return pd.DataFrame()
-
 
 @st.cache_data
 def fetch_client_ids():
     try:
-        response = requests.get(f"{API_URL}/client_ids", timeout=0.05)
+        response = requests.get(f"{API_URL}/client_ids")
         if response.status_code == 200:
             return response.json().get("client_ids", [])
         return []
@@ -118,6 +223,31 @@ def fetch_client_info(client_id):
         return None
 
 client_ids = fetch_client_ids()
+if not client_ids:
+    st.error("Aucun client disponible - Vérifiez la connexion à l'API")
+    st.stop()
+
+
+@st.cache_data(ttl=600)
+def fetch_global_shap_matrix(sample_size=1000):
+    response = requests.get(f"{API_URL}/global_shap_matrix?sample_size={sample_size}",
+                            headers={"x-api-key": API_KEY})
+    response.raise_for_status()
+    return response.json()
+
+# ======================================================================================
+
+
+# ======================================================================================
+
+@st.cache_data(ttl=300)
+def fetch_local_shap_explanation(client_id: int):
+    response = requests.get(
+        f"{API_URL}/shap/local/{client_id}",
+        headers={"x-api-key": API_KEY}
+    )
+    response.raise_for_status()
+    return response.json()
 
 # ===== Sidebar =====
 st.sidebar.markdown("## 🔍 Analyse d'un client")
@@ -125,6 +255,7 @@ selected_id = st.sidebar.selectbox("Sélectionner un client", client_ids)
 if not selected_id or not isinstance(selected_id, int):
     st.warning("Veuillez sélectionner un client valide")
     st.stop()
+
 submitted = st.sidebar.button("Soumettre la prédiction")
 
 # Gestion de la checkbox SHAP via session state
@@ -132,7 +263,13 @@ st.session_state.show_shap = st.sidebar.checkbox(
     "Afficher l'explication SHAP",
     value=st.session_state.get("show_shap", False)  # Utiliser .get() avec valeur par défaut
 )
-
+st.markdown("---")
+st.sidebar.markdown("## 🔧 Options")
+compare_group = st.sidebar.radio(
+    "Groupe de comparaison",
+    ["Population totale", "Clients similaires"],
+    help="Sélectionnez le groupe de référence pour les comparaisons"
+)
 # === Initialisation de session state ===
 required_states = {
     "predicted": False,
@@ -170,7 +307,6 @@ def plot_shap_waterfall(shap_data):
 
 # ===== Soumission prédiction =====
 if submitted:
-    #client_row = df_test[df_test["SK_ID_CURR"] == selected_id]
     client_info = fetch_client_info(selected_id)
     if not client_info:
         st.error("Données client non disponibles")
@@ -202,7 +338,8 @@ if submitted:
         st.session_state.predicted = False
 
 # ===== Affichage des résultats =====
-col_left, col_right = st.columns([2, 3])
+col_left, col_right = st.columns([1, 1])
+
 
 # Colonne gauche - Toujours visible
 with col_left:
@@ -237,10 +374,6 @@ with col_left:
         except:
             return "N/A"
 
-    # Sélection d'une ligne par ID
-
-    #row = df_test[df_test["SK_ID_CURR"] == selected_id].iloc[0]
-
     # Dictionnaire des infos formatées
     infos = {
     "ID Client": int(row["SK_ID_CURR"]),
@@ -263,21 +396,23 @@ with col_left:
     df_infos = pd.DataFrame(list(infos.items()), columns=["Libellé", "Valeur"])
     df_infos["Valeur"] = df_infos["Valeur"].astype(str)  # 🔥 force explicite en string
     df_infos["Afficher"] = False  # Colonne pour checkboxes
+    
     # Construction du GridOptions
+    # Configuration de la grille interactive
     gb = GridOptionsBuilder.from_dataframe(df_infos)
-    gb.configure_column("Afficher", editable=True)  # rendre la colonne interactive
+    gb.configure_column("Afficher", 
+                        editable=True, 
+                        cellStyle={'color': 'white', 'background-color': '#4a6fa5'},
+                        headerClass="ag-header-cell-label")
     gb.configure_grid_options(domLayout='normal')
-
-    grid_options = gb.build()
-
-    # Affichage interactif avec retour des valeurs modifiées
+    
     grid_response = AgGrid(
         df_infos,
-        gridOptions=grid_options,
-        height=500,
+        gridOptions=gb.build(),
+        height=450,
         update_mode=GridUpdateMode.MODEL_CHANGED,
         fit_columns_on_grid_load=True,
-        allow_unsafe_jscode=True  # évite certains bugs liés à la JS marshalling
+        theme='streamlit'
     )
 
     # DataFrame mis à jour par les interactions utilisateur
@@ -289,169 +424,131 @@ with col_left:
     except IndexError:
         pass  # Par sécurité si jamais non trouvé
 
-    # Boucle sur les lignes cochées pour affichage de graphiques
     for _, row in updated_df.iterrows():
         if row["Afficher"]:
             label = row["Libellé"]
             valeur = row["Valeur"]
+            
+            # Configuration dynamique par caractéristique
+            feature_config = {
+                "Âge": {
+                    "api_feature": "DAYS_BIRTH",
+                    "parse_func": lambda v: -float(v.split()[0]) * 365,
+                    "transform_func": lambda x: -x / 365,
+                    "unit": "ans"
+                },
+                "Revenu par personne": {
+                    "api_feature": "INCOME_PER_PERSON",
+                    "parse_func": lambda v: float(v.replace('€', '').replace(' ', '').replace(',', '')),
+                    "transform_func": None,
+                    "unit": "€"
+                },
+                "Stabilité professionnelle": {
+                    "api_feature": "DAYS_EMPLOYED_PERC",
+                    "parse_func": lambda v: float(v.replace('%', '').replace(',', '.')) / 100,
+                    "transform_func": lambda x: x * 100,
+                    "unit": "%"
+                }
+            }
+            
+            # Récupération de la config
+            config = feature_config.get(label, {})
+            if not config:
+                st.warning(f"Configuration manquante pour {label}")
+                continue
+                
+            try:
+                # Construction des filtres
+                filters = {}
+                if "Genre" in updated_df.loc[updated_df["Afficher"], "Libellé"].values:
+                    filters["CODE_GENDER"] = 1 if genre_client == "Homme" else 0
 
-            # ============================
-            # ÂGE
-            # ============================
-            if label == "Âge":
-                # Détermine le filtre genre
-                if genre_client == "Homme":
-                    population_df = df_test[df_test["CODE_GENDER"] == 1]
-                elif genre_client == "Femme":
-                    population_df = df_test[df_test["CODE_GENDER"] == 0]
-                else:
-                    population_df = df_test
-
-                client_age = float(valeur.split()[0])
-                population = population_df["DAYS_BIRTH"]
-                plot_boxplot_comparison(
-                    population_series=population,
-                    client_value=client_age,
-                    title=f"Âge du client (Genre: {genre_client})",
-                    xlabel="Âge (années)",
-                    unit=" ans",
-                    transform=lambda x: -x / 365
+                # Appel API générique
+                response = requests.post(
+                    f"{API_URL}/population_stats",
+                    json={
+                        "feature": config["api_feature"],
+                        "filters": filters,
+                        "sample_size": 1000
+                    },
+                    headers={"x-api-key": API_KEY}
                 )
-
-            # ============================
-            # REVENU PAR PERSONNE
-            # ============================
-            elif label == "Revenu par personne":
-                client_val = float(valeur.replace("€", "").replace(" ", "").replace(",", "."))
-
-                # Vérifie si "Genre" est aussi affiché
-                genre_active = "Genre" in updated_df.loc[updated_df["Afficher"], "Libellé"].values
-
-                if genre_active:
-                    # Deux boxplots : homme vs femme
-                    df_filtered = df_test[["INCOME_PER_PERSON", "CODE_GENDER"]].dropna().copy()
-                    df_filtered["GENRE"] = df_filtered["CODE_GENDER"].map({1: "Homme", 0: "Femme"})
-
-                    fig, ax = plt.subplots(figsize=(8, 5))
-                    sns.boxplot(data=df_filtered, x="GENRE", y="INCOME_PER_PERSON", ax=ax)
-
-                    if genre_client in ["Homme", "Femme"]:
-                        pos_x = 0 if genre_client == "Homme" else 1
-                        ax.scatter(pos_x, client_val, color='red', zorder=10, s=100, label="Client")
-                        ax.legend()
-
-                    ax.set_title("Revenu par personne – comparaison genre")
-                    ax.set_xlabel("Genre")
-                    ax.set_ylabel("Revenu (€)")
-                    st.pyplot(fig)
-
+                # Vérifier la structure de la réponse
+                if response.status_code == 200:
+                    data = response.json()
+                    if "stats" not in data:
+                        st.error("Structure de réponse API invalide")
+                        continue
+                        
+                    stats = data["stats"]
                 else:
-                    # Filtré selon genre
-                    if genre_client == "Homme":
-                        population_df = df_test[df_test["CODE_GENDER"] == 1]
-                    elif genre_client == "Femme":
-                        population_df = df_test[df_test["CODE_GENDER"] == 0]
-                    else:
-                        population_df = df_test
+                    st.error(f"Erreur API : {response.status_code} - {response.text}")
+                    continue
+                
+                response.raise_for_status()
+                stats = response.json()["stats"]
+                
+                # Conversion de la valeur client
+                client_value = config["parse_func"](valeur)
+                
+                # Génération du graphique
+                plot_boxplot_comparison(
+                    population_stats=stats,
+                    client_value=client_value,
+                    title=f"Position du client - {label}",
+                    unit=config["unit"],
+                    transform=config["transform_func"]
+                )
+                
+            except Exception as e:
+                st.error(f"Erreur lors de l'affichage de {label} : {str(e)}")
 
-                    population = population_df["INCOME_PER_PERSON"]
-                    plot_boxplot_comparison(
-                        population_series=population,
-                        client_value=client_val,
-                        title=f"Revenu par personne (Genre: {genre_client})",
-                        xlabel="Revenu (€)",
-                        unit="€"
-                    )
-
-            # ============================
-            # STABILITÉ PROFESSIONNELLE
-            # ============================
-            elif label == "Stabilité professionnelle":
-                client_val = float(valeur.replace("%", "").replace(",", ".")) / 100
-                genre_active = "Genre" in updated_df.loc[updated_df["Afficher"], "Libellé"].values
-
-                if genre_active:
-                    df_filtered = df_test[["DAYS_EMPLOYED_PERC", "CODE_GENDER"]].dropna().copy()
-                    df_filtered["GENRE"] = df_filtered["CODE_GENDER"].map({1: "Homme", 0: "Femme"})
-
-                    fig, ax = plt.subplots(figsize=(8, 5))
-                    sns.boxplot(data=df_filtered, x="GENRE", y="DAYS_EMPLOYED_PERC", ax=ax)
-
-                    if genre_client in ["Homme", "Femme"]:
-                        pos_x = 0 if genre_client == "Homme" else 1
-                        ax.scatter(pos_x, client_val, color='red', zorder=10, s=100, label="Client")
-                        ax.legend()
-
-                    ax.set_title("Stabilité professionnelle – comparaison genre")
-                    ax.set_xlabel("Genre")
-                    ax.set_ylabel("Ratio emploi (%)")
-                    ax.set_ylim(0, 1)
-                    st.pyplot(fig)
-
-                else:
-                    if genre_client == "Homme":
-                        population_df = df_test[df_test["CODE_GENDER"] == 1]
-                    elif genre_client == "Femme":
-                        population_df = df_test[df_test["CODE_GENDER"] == 0]
-                    else:
-                        population_df = df_test
-
-                    population = population_df["DAYS_EMPLOYED_PERC"]
-                    plot_boxplot_comparison(
-                        population_series=population,
-                        client_value=client_val,
-                        title=f"Stabilité professionnelle (Genre: {genre_client})",
-                        xlabel="Pourcentage",
-                        unit="%",
-                        transform=lambda x: x * 100
-                    )
-
-
-
-        # --- Analyse SHAP Globale ---
+    # --- Analyse SHAP Globale ---
     if st.session_state.predicted and st.session_state.show_shap:
         st.markdown("---")
         st.subheader("Analyse Globale")
         with st.spinner("Calcul des tendances globales..."):
             try:
-                # Récupération des données brutes
-                response = requests.get(f"{API_URL}/global_shap_matrix?sample_size=1000")
-                response.raise_for_status()
-                data = response.json()
+                # Récupération des données via le cache
+                data = fetch_global_shap_matrix(sample_size=1000)
                 
                 # Conversion des données
                 shap_values = np.array(data['shap_values'])
                 feature_values = pd.DataFrame(data['feature_values'])
-                features = data['features']
+                features = data['features']        # Extraction depuis metadata
                 base_value = data['base_value']
+                #features = data['metadata']['features']         # Extraction depuis metadata
+                #base_value = data['metadata']['base_value']
                 
                 # Création d'un array de base_values adapté
                 n_samples = shap_values.shape[0]
-                base_values = np.full(n_samples, base_value)  # <-- Correction clé
+                base_values = np.full(n_samples, base_value)
                 
-                # Création de l'objet Explanation
-                explanation = shap.Explanation(
-                    values=shap_values,
-                    base_values=base_values,  # Maintenant un array
-                    data=feature_values.values,
-                    feature_names=features
-                )
+                # Création de la "structure" d'explication attendue par notre plot
+                explanation = {
+                    'values': shap_values,
+                    'data': feature_values.values,
+                    'feature_names': features
+                }
                 
-                # Génération du plot
-                plt.figure(figsize=(10, 6))
-                shap.summary_plot(
-                    explanation,
-                    plot_type="dot",
-                    show=False
-                )
-                
-                # Personnalisation
-                plt.title("Impact Global des Variables", pad=20)
-                st.pyplot(plt.gcf())
-                plt.close()
-                
+                # Génération du summary plot avec Plotly
+                fig = plot_summary_chart(explanation, max_display=10)
+                st.plotly_chart(fig, use_container_width=True)
+
+                # Streamlit UI
+                # Utilisation du selected_id déjà défini
+                selected_id = st.session_state.previous_id
+
+                # Synchronisation avec le checkbox SHAP
+               # if st.session_state.show_shap:
+                    # Rafraîchissement conditionnel des données
+                    #if 'shap_data' not in st.session_state or st.session_state.previous_id != selected_id:
+                        
+
             except Exception as e:
-                st.error(f"Erreur : {str(e)}")
+                st.error(f"Erreur lors de l'analyse SHAP : {str(e)}")
+                st.stop()
+
 # Colonne droite - Résultats prédiction
 with col_right:
     #st.subheader("Analyse du risque client")
@@ -483,20 +580,81 @@ with col_right:
             )
             # --- 3. Explications SHAP indépendantes ---
             if st.session_state.show_shap:
-                st.markdown("---")
+                st.markdown("---")           
+                st.markdown('<div class="feature-card">', unsafe_allow_html=True)
+                st.subheader("📖 Explication du score")  
                 with st.spinner("Génération des explications SHAP..."):
-                    X = pd.DataFrame([st.session_state.client_data])[features]
-                    X_scaled = pd.DataFrame(
-                        scaler.transform(X),
-                        columns=features,
-                        index=X.index
-                    )
+                    try:
+                        explanation = fetch_local_shap_explanation(selected_id)
 
-                    shap_values = explainer(X_scaled)
-                    fig, ax = plt.subplots(figsize=(10, 6))
-                    shap.plots.waterfall(shap_values[0], max_display=10, show=False)
-                    st.pyplot(fig)
+                        fig = plot_waterfall_chart(explanation)
+                        st.plotly_chart(fig, use_container_width=True)
+                    except Exception as e:
+                        st.error(f"Erreur technique : {str(e)}")
+                st.markdown('</div>', unsafe_allow_html=True)
 
+                # Histogrammes SHAP comparatifs
+                st.markdown('<div class="feature-card">', unsafe_allow_html=True)
+                    
+                # 3. Nouvelle section pour les histogrammes (en réutilisant les données)
+                st.markdown("### 🔍 Analyse de variables influentes")
+
+                # Séparer les top 15 positives et négatives (SHAP values)
+                shap_values_df = pd.DataFrame({
+                    'feature': explanation['features'],
+                    'shap_value': explanation['values'],
+                    'feature_value': list(explanation['client_data'].values()),
+                    'SK_ID_CURR': selected_id
+                }).sort_values(by='shap_value', ascending=False)
+
+                top_15_positive = shap_values_df.head(15)
+                top_15_negative = shap_values_df.tail(15).sort_values(by='shap_value')
+
+                # Sélection des features
+                selected_pos_feature = st.selectbox(
+                    "📈 Variable augmentant le risque (Top 15)",
+                    top_15_positive['feature'],
+                    key="pos_feature"
+                )
+
+                selected_neg_feature = st.selectbox(
+                    "📉 Variable réduisant le risque (Top 15)",
+                    top_15_negative['feature'],
+                    key="neg_feature"
+                )
+                
+                # Préparation des données
+                shap_df = pd.DataFrame({
+                    'feature': explanation['features'],
+                    'shap_value': explanation['values'],
+                    'feature_value': list(explanation['client_data'].values()),
+                    'SK_ID_CURR': selected_id
+                })
+                
+                # Sélection des features les plus importantes
+                st.markdown("#### Distribution des variables influentes")
+                #client_info = fetch_client_info(selected_id)
+                dist1 = plot_feature_distribution(
+                    feature_name=selected_pos_feature,
+                    full_data=df_test,
+                    client_data=client_info,
+                    base_color="crimson",
+                    client_bin_color="yellow",
+                    title_prefix="📈 Risque ↑"
+                )
+
+                dist2 = plot_feature_distribution(
+                    feature_name=selected_neg_feature,
+                    full_data=df_test,
+                    client_data=client_info,
+                    base_color="seagreen",
+                    client_bin_color="yellow",
+                    title_prefix="📉 Risque ↓"
+                )
+
+                st.plotly_chart(dist1, use_container_width=True)
+                st.plotly_chart(dist2, use_container_width=True)
+                
         except Exception as e:
             st.error(f"Erreur d'affichage : {str(e)}")
     else:

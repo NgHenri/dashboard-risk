@@ -25,3 +25,18 @@ def format_years(value):
         return f"{-int(value)//365} ans"
     except:
         return "N/A"
+
+# fonction de formatage
+def parse_client_value(value, label):
+    """Convertit la valeur formatée en valeur numérique"""
+    try:
+        if label == "Âge":
+            return float(value.split()[0])
+        elif "€" in value:
+            return float(value.replace("€", "").replace(" ", "").replace(",", "."))
+        elif "%" in value:
+            return float(value.replace("%", "").replace(",", ".")) / 100
+        else:
+            return float(value)
+    except:
+        return 0.0

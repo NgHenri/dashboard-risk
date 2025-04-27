@@ -35,10 +35,10 @@ def show_risk_gauge(score, client_id, threshold=config.THRESHOLD):
     risk_color = "#ff4d4d" if score >= threshold else "#2ecc71"  # rouge / vert doux
 
     # Titre
-    st.markdown(
-        f"<div style='color:{risk_color}; font-size: 24px; font-weight:bold'>{risk_status}</div>",
-        unsafe_allow_html=True
-    )
+    #st.markdown(
+    #    f"<div style='color:{risk_color}; font-size: 24px; font-weight:bold'>{risk_status}</div>",
+    #    unsafe_allow_html=True
+    #)
 
     # Contexte score et seuil
     #st.markdown(f"<p style='font-size:18px'>Score brut : <strong>{score:.4f}</strong> | Seuil : <strong>{threshold:.4f}</strong></p>", unsafe_allow_html=True)
