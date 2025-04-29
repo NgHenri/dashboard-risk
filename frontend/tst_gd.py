@@ -18,13 +18,21 @@ from utils.formatters import (
 )
 from utils.styling import style_rules, build_dynamic_styling
 
-# from utils.shap_utils
 from utils.api_requests import (
     check_api_health,
     fetch_client_ids,
     fetch_client_info,
     fetch_prediction,
     fetch_population_stats,
+)
+from utils.user_interactions import (
+    prepare_client_info,
+    create_interactive_grid,
+    process_user_interactions,
+    build_feature_config,
+    get_genre_client,
+    get_updated_data,
+    process_selection_and_display_plot,
 )
 from utils.shap_utils import (
     fetch_client_data_for_shap,
@@ -33,15 +41,6 @@ from utils.shap_utils import (
     fetch_local_shap_explanation,
 )
 from st_aggrid import AgGrid, JsCode, GridOptionsBuilder, GridUpdateMode
-
-from utils.user_interactions import (
-    prepare_client_info,
-    create_interactive_grid,
-    build_feature_config,
-    get_genre_client,
-    get_updated_data,
-    process_selection_and_display_plot,
-)
 from utils.visuals import (
     plot_boxplot_comparison,
     plot_waterfall_chart,
@@ -82,6 +81,11 @@ if not check_api_health(TIMEOUT):
 
 st.set_page_config(layout="wide")
 st.title("🏦 Dashboard Crédit - Prédictions & Explicabilité")
+
+
+# ------------------ Main App UI ------------------ #
+
+tab1, tab2, tab3, tab4 = st.tabs(["Prédiction", "Exploration", "Simulation", "Autre"])
 
 # ===== Chargement des données =====
 
@@ -156,15 +160,46 @@ def load_model_artifacts():
     return model, scaler, features, explainer, global_shap_values, df_test_sample
 
 
-# ======================================================================================
-
-
-# ======================================================================================
-
 # Chargement des données via l'API
 model, scaler, features, explainer, global_shap_values, df_test_sample = (
     load_model_artifacts()
 )
+
+# ===== Fonctions de service =====
+
+
+# Mettre à jour les appels dans les visualisations
+def update_comparison_plots(updated_df, genre_client):
+    for _, row in updated_df.iterrows():
+        if row["Afficher"]:
+            label = row["Libellé"]
+            valeur = row["Valeur"]
+
+            # Récupération des données de comparaison via API
+            try:
+                response = requests.post(
+                    f"{API_URL}/population_stats",
+                    json={
+                        "feature": label,
+                        "filters": {"genre": genre_client} if genre_client else {},
+                    },
+                    headers={"x-api-key": API_KEY},
+                    timeout=TIMEOUT,
+                )
+                response.raise_for_status()
+                stats = response.json()
+
+                # Création du graphique avec les données de l'API
+                plot_boxplot_comparison(
+                    population_stats=stats,
+                    client_value=parse_client_value(valeur, label),
+                    title=f"Comparaison pour {label}",
+                    unit=get_unit_for_label(label),
+                )
+
+            except Exception as e:
+                st.error(f"Erreur API : {str(e)}")
+
 
 client_ids = fetch_client_ids()
 if not client_ids:
@@ -172,10 +207,10 @@ if not client_ids:
     st.stop()
 
 
-# ------------------ Main App UI ------------------ #
+# ======================================================================================
 
-tab1, tab2, tab3, tab4 = st.tabs(["Prédiction", "Exploration", "Simulation", "Autre"])
 
+# ======================================================================================
 
 # ===== Sidebar =====
 st.sidebar.markdown("## 🔍 Analyse d'un client")
@@ -271,28 +306,183 @@ with col_left:
     client_info = fetch_client_info(selected_id)
 
     if client_info is not None:
-        row = pd.Series(client_info)  # On récupère une ligne spécifique
+        row = pd.Series(client_info)
     else:
         st.stop()
 
-    df_infos = prepare_client_info(row)
+    def get_employment_type(row):
+        mapping = {
+            "NAME_INCOME_TYPE_PENSIONER": "Retraité",
+            "NAME_INCOME_TYPE_WORKING": "Salarié",
+            "NAME_INCOME_TYPE_STUDENT": "Étudiant",
+            "ORGANIZATION_TYPE_SELF_EMPLOYED": "Indépendant",
+            "ORGANIZATION_TYPE_MILITARY": "Militaire",
+        }
+        for col, label in mapping.items():
+            if safe_get(row, col) == 1:
+                return label
+        return "Autre"
 
-    # Construction initiale de la config
-    feature_config = build_feature_config()
+    def format_days_delay(value):
+        try:
+            if pd.isna(value) or value <= 0:
+                return "Aucun retard"
+            return f"{int(value)} jours de retard"
+        except:
+            return "N/A"
 
-    # Construction du Grid
-    updated_df, grid_response = create_interactive_grid(df_infos, edit=False)
+    # Dictionnaire des infos formatées
+    infos = {
+        "ID Client": int(row["SK_ID_CURR"]),
+        "Âge": format_years(safe_get(row, "DAYS_BIRTH")),
+        "Genre": format_gender(safe_get(row, "CODE_GENDER")),
+        "Type de logement": (
+            "Locataire"
+            if safe_get(row, "NAME_HOUSING_TYPE_RENTED_APARTMENT") == 1
+            else "Autre"
+        ),
+        "Statut marital": (
+            "Marié(e)" if safe_get(row, "NAME_FAMILY_STATUS_MARRIED") == 1 else "Autre"
+        ),
+        "Type d'emploi": get_employment_type(row),
+        "Stabilité professionnelle": format_percentage(
+            safe_get(row, "DAYS_EMPLOYED_PERC")
+        ),
+        "Revenu par personne": format_currency(safe_get(row, "INCOME_PER_PERSON")),
+        "Montant du crédit demandé": format_currency(safe_get(row, "AMT_CREDIT")),
+        "Charge crédit (revenu vs crédit)": format_percentage(
+            safe_get(row, "INCOME_CREDIT_PERC")
+        ),
+        "Poids des remboursements sur le revenu": format_percentage(
+            safe_get(row, "ANNUITY_INCOME_PERC")
+        ),
+        "Historique crédit (ancienneté moyenne)": format_years(
+            safe_get(row, "BURO_DAYS_CREDIT_MEAN")
+        ),
+        "Dernier retard de paiement": format_days_delay(
+            safe_get(row, "INSTAL_DBD_MAX")
+        ),
+    }
 
-    # Traitement des sélections
-    genre_client = get_genre_client(updated_df)
-    updated_data = get_updated_data(updated_df, feature_config)
+    # Construction du DataFrame pour affichage
+    df_infos = pd.DataFrame(list(infos.items()), columns=["Libellé", "Valeur"])
+    df_infos["Valeur"] = df_infos["Valeur"].astype(str)  # 🔥 force explicite en string
+    df_infos["Afficher"] = False  # Colonne pour checkboxes
 
-    # Pour chaque feature affichée par l'utilisateur
-    process_selection_and_display_plot(
-        grid_response, feature_config, genre_client, API_URL, API_KEY
+    # Construction du GridOptions
+    # Configuration de la grille interactive
+    gb = GridOptionsBuilder.from_dataframe(df_infos)
+    gb.configure_column(
+        "Afficher",
+        editable=True,
+        cellStyle={"color": "white", "background-color": "#4a6fa5"},
+        headerClass="ag-header-cell-label",
     )
-    # === analyse Globale du modèle ===
-    # Expander pour afficher l'explication SHAP
+    gb.configure_grid_options(domLayout="normal")
+
+    grid_response = AgGrid(
+        df_infos,
+        gridOptions=gb.build(),
+        height=450,
+        update_mode=GridUpdateMode.MODEL_CHANGED,
+        fit_columns_on_grid_load=True,
+        theme="streamlit",
+    )
+
+    # DataFrame mis à jour par les interactions utilisateur
+    updated_df = grid_response["data"]
+
+    genre_client = None
+    try:
+        genre_client = updated_df.loc[
+            updated_df["Libellé"] == "Genre", "Valeur"
+        ].values[0]
+    except IndexError:
+        pass  # Par sécurité si jamais non trouvé
+
+    for _, row in updated_df.iterrows():
+        if row["Afficher"]:
+            label = row["Libellé"]
+            valeur = row["Valeur"]
+
+            # Configuration dynamique par caractéristique
+            feature_config = {
+                "Âge": {
+                    "api_feature": "DAYS_BIRTH",
+                    "parse_func": lambda v: -float(v.split()[0]) * 365,
+                    "transform_func": lambda x: -x / 365,
+                    "unit": "ans",
+                },
+                "Revenu par personne": {
+                    "api_feature": "INCOME_PER_PERSON",
+                    "parse_func": lambda v: float(
+                        v.replace("€", "").replace(" ", "").replace(",", "")
+                    ),
+                    "transform_func": None,
+                    "unit": "€",
+                },
+                "Stabilité professionnelle": {
+                    "api_feature": "DAYS_EMPLOYED_PERC",
+                    "parse_func": lambda v: float(v.replace("%", "").replace(",", "."))
+                    / 100,
+                    "transform_func": lambda x: x * 100,
+                    "unit": "%",
+                },
+            }
+
+            # Récupération de la config
+            config = feature_config.get(label, {})
+            if not config:
+                st.warning(f"Configuration manquante pour {label}")
+                continue
+
+            try:
+                # Construction des filtres
+                filters = {}
+                if "Genre" in updated_df.loc[updated_df["Afficher"], "Libellé"].values:
+                    filters["CODE_GENDER"] = 1 if genre_client == "Homme" else 0
+
+                # Appel API générique
+                response = requests.post(
+                    f"{API_URL}/population_stats",
+                    json={
+                        "feature": config["api_feature"],
+                        "filters": filters,
+                        "sample_size": 1000,
+                    },
+                    headers={"x-api-key": API_KEY},
+                )
+                # Vérifier la structure de la réponse
+                if response.status_code == 200:
+                    data = response.json()
+                    if "stats" not in data:
+                        st.error("Structure de réponse API invalide")
+                        continue
+
+                    stats = data["stats"]
+                else:
+                    st.error(f"Erreur API : {response.status_code} - {response.text}")
+                    continue
+
+                response.raise_for_status()
+                stats = response.json()["stats"]
+
+                # Conversion de la valeur client
+                client_value = config["parse_func"](valeur)
+
+                # Génération du graphique
+                plot_boxplot_comparison(
+                    population_stats=stats,
+                    client_value=client_value,
+                    title=f"Position du client - {label}",
+                    unit=config["unit"],
+                    transform=config["transform_func"],
+                )
+
+            except Exception as e:
+                st.error(f"Erreur lors de l'affichage de {label} : {str(e)}")
+
+        # Expander pour afficher l'explication SHAP
     with st.expander("📖 Analyse Globale"):
         # --- Analyse SHAP Globale ---
         if st.session_state.predicted and st.session_state.show_shap:
@@ -333,6 +523,7 @@ with col_left:
 
 # Colonne droite - Résultats prédiction
 with col_right:
+    # st.subheader("Analyse du risque client")
 
     if st.session_state.predicted:
         try:
@@ -366,6 +557,9 @@ with col_right:
                         explanation = fetch_local_shap_explanation(selected_id)
 
                         fig = plot_waterfall_chart_expandable(explanation)
+                        # fig = plot_waterfall_chart(explanation)
+                        # st.plotly_chart(fig, use_container_width=True)
+
                     except Exception as e:
                         st.error(f"Erreur technique : {str(e)}")
                 st.markdown("</div>", unsafe_allow_html=True)

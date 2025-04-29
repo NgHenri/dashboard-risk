@@ -20,9 +20,9 @@ from utils.shap_utils import (
     load_model_artifacts,
     fetch_client_data_for_shap,
     load_test_data_from_api,
-    get_top_positive_negative_features,
 )
 
+# get_top_positive_negative_features
 # from utils.shap_utils import  get_shap_long_dataframe
 # from risk_gauge import show_risk_gauge, display_risk_message
 from risk_gauge import display_risk_message
@@ -369,6 +369,14 @@ with st.sidebar:
     if selected_id != st.session_state.last_selected_id:
         st.session_state.analyze_clicked = False
         st.session_state.last_selected_id = selected_id
+
+    st.markdown("---")
+    st.subheader("🔧 Options")
+    compare_group = st.radio(
+        "Groupe de comparaison",
+        ["Population totale", "Clients similaires"],
+        help="Sélectionnez le groupe de référence pour les comparaisons",
+    )
 
     # --- Contenu principal ---
     st.markdown("---")
