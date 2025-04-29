@@ -6,6 +6,7 @@ from utils.formatters import (
     format_percentage,
     format_gender,
     format_years,
+    parse_currency,
 )
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
 
@@ -87,7 +88,7 @@ def prepare_client_info(row):
 # Configuration de la grille avec AgGrid
 
 
-def create_interactive_grid(df, edit=True, grid_height=450):
+def create_interactive_grid(df, edit=True, grid_height=450, context=""):
     """
     Crée une grille interactive avec cases à cocher désactivées pour certaines lignes
     """
@@ -158,6 +159,7 @@ def create_interactive_grid(df, edit=True, grid_height=450):
         fit_columns_on_grid_load=True,
         theme="streamlit",
         allow_unsafe_jscode=True,
+        key=f"aggrid_{context}",
     )
 
     return grid_response["data"], grid_response
@@ -176,9 +178,8 @@ def build_feature_config():
         },
         "Revenu par personne": {
             "api_feature": "INCOME_PER_PERSON",
-            "parse_func": lambda v: float(
-                v.replace("€", "").replace(" ", "").replace(",", "")
-            ),
+            # "parse_func": lambda v: float(v.replace("€", "").replace(" ", "").replace(",", "")),
+            "parse_func": lambda v: parse_currency(v),
             "transform_func": None,
             "unit": "€",
         },

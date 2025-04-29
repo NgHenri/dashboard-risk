@@ -8,7 +8,39 @@ import pandas as pd
 import numpy as np
 
 
-def plot_boxplot_comparison(
+def restore_discrete_types(df, max_cardinality=20, verbose=False):
+    """
+    Convertit certaines colonnes float en int ou category si elles semblent discrètes.
+
+    Args:
+        df (pd.DataFrame): Le DataFrame à traiter.
+        max_cardinality (int): Seuil maximum de valeurs uniques pour considérer comme discret.
+        verbose (bool): Affiche les colonnes converties.
+
+    Returns:
+        pd.DataFrame: Un nouveau DataFrame avec des types adaptés.
+    """
+    df_new = df.copy()
+    for col in df.columns:
+        if pd.api.types.is_float_dtype(df[col]):
+            uniques = df[col].dropna().unique()
+            if (
+                all((uniques == uniques.astype(int)))
+                and len(uniques) <= max_cardinality
+            ):
+                # Tous les floats sont des entiers et peu nombreux
+                if verbose:
+                    print(f"Colonne '{col}' convertie en int")
+                df_new[col] = df[col].astype("Int64")  # Int64 = int nullable
+            elif len(uniques) <= max_cardinality:
+                # Peu de valeurs uniques => variable discrète => category
+                if verbose:
+                    print(f"Colonne '{col}' convertie en category")
+                df_new[col] = df[col].astype("category")
+    return df_new
+
+
+def plot_boxplot_comparison0(
     population_stats: dict, client_value: float, title: str, unit: str, transform=None
 ):
     """
@@ -90,6 +122,152 @@ def plot_boxplot_comparison(
 
     # Affichage dans Streamlit
     st.plotly_chart(fig, use_container_width=True)
+
+
+def plot_boxplot_comparison(
+    population_stats: dict,
+    client_value: float,
+    title: str,
+    unit: str,
+    transform=None,
+    height=450,
+):
+    """
+    Boxplot enrichi avec statistiques détaillées et design moderne
+    """
+    # Transformation des valeurs
+    stats = {k: transform(v) if transform else v for k, v in population_stats.items()}
+    transformed_value = transform(client_value) if transform else client_value
+
+    # Création de la figure
+    fig = go.Figure()
+
+    # Boxplot principal avec effet de profondeur
+    fig.add_trace(
+        go.Box(
+            q1=[stats["25%"]],
+            median=[stats["50%"]],
+            q3=[stats["75%"]],
+            lowerfence=[stats["min"]],
+            upperfence=[stats["max"]],
+            mean=[stats["mean"]],
+            name="Population",
+            marker_color="#636EFA",
+            line_color="#2A3F5F",
+            fillcolor="rgba(99, 110, 250, 0.3)",
+            boxmean="sd",
+            width=0.4,
+            notchwidth=0.2,
+            whiskerwidth=0.2,
+            hoverinfo="none",
+        )
+    )
+
+    # Point client stylisé
+    fig.add_trace(
+        go.Scatter(
+            x=[0.15],
+            y=[transformed_value],
+            mode="markers+text",
+            marker=dict(
+                color="#FF6692",
+                size=16,
+                line=dict(color="black", width=1.5),
+                symbol="diamond",
+            ),
+            text=[f"  Client : {transformed_value:.2f}{unit}"],
+            textposition="middle right",
+            textfont=dict(color="#FF6692", size=12),
+            name="Client",
+            hoverinfo="y+name",
+        )
+    )
+
+    # Ligne de moyenne interactive
+    fig.add_shape(
+        type="line",
+        x0=-0.4,
+        y0=stats["mean"],
+        x1=0.4,
+        y1=stats["mean"],
+        line=dict(color="#00CC96", width=2.5, dash="dot"),
+        name="Moyenne",
+        opacity=0.8,
+    )
+
+    # Annotation de la moyenne
+    fig.add_annotation(
+        x=0.5,
+        y=stats["mean"],
+        text=f"Moyenne : {stats['mean']:.2f}{unit}",
+        showarrow=False,
+        font=dict(color="#00CC96", size=11),
+        xanchor="left",
+    )
+
+    # Zone de percentile
+    fig.add_shape(
+        type="rect",
+        x0=-0.5,
+        y0=stats["25%"],
+        x1=0.5,
+        y1=stats["75%"],
+        fillcolor="rgba(99, 110, 250, 0.1)",
+        line=dict(width=0),
+        name="25-75%",
+    )
+
+    # Mise en forme avancée
+    fig.update_layout(
+        title={
+            "text": f"<b>{title}</b><br><sub style='color:gray'>Comparaison avec la population</sub>",
+            "x": 0.05,
+            "xanchor": "left",
+        },
+        yaxis_title=f"Valeur ({unit})",
+        xaxis={
+            "showticklabels": False,
+            "range": [-1, 1],
+            "gridcolor": "rgba(0,0,0,0.05)",
+        },
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        margin=dict(t=80, l=40, r=20, b=40),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+            bgcolor="rgba(255,255,255,0.8)",
+        ),
+        hoverlabel=dict(bgcolor="white", font_size=12, font_family="Arial"),
+        height=height,
+        font_family="Arial",
+        separators=",.",
+    )
+
+    # Ajout des éléments interactifs
+    fig.update_traces(
+        hoverlabel=dict(
+            bgcolor="white", bordercolor="#2A3F5F", font=dict(color="#2A3F5F")
+        ),
+        selector=dict(type="box"),
+    )
+
+    # Affichage des statistiques au hover
+    fig.data[0].hovertemplate = (
+        "<b>Population</b><br>"
+        "Min: %{lowerfence:.2f}<br>"
+        "Q1: %{q1:.2f}<br>"
+        "Médiane: %{median:.2f}<br>"
+        "Q3: %{q3:.2f}<br>"
+        "Max: %{upperfence:.2f}<br>"
+        "Moyenne: %{mean:.2f}<br>"
+        "Écart-type: %{sd:.2f}<extra></extra>"
+    )
+
+    return st.plotly_chart(fig, use_container_width=True)
 
 
 # ======================================================================
@@ -351,88 +529,6 @@ def plot_waterfall_chart_expandable(explanation, initial_max_features=10):
     st.plotly_chart(fig, use_container_width=True)
 
 
-def plot_waterfall_chart_expandable0(explanation, initial_max_features=10):
-    """
-    Crée un waterfall plot interactif fidèle à la version originale :
-    - Affiche les features dans l'ordre donné par SHAP
-    - Conserve les signes natifs
-    - Ajoute quelques options
-    """
-    features = explanation["features"]
-    values = explanation["values"]
-    base_value = explanation["base_value"]
-
-    with st.expander("Options d'affichage"):
-        max_features = st.slider(
-            "Nombre de features affichées",
-            min_value=5,
-            max_value=min(len(features), 50),
-            value=initial_max_features,
-            step=5,
-            help="Sélectionnez combien de variables afficher.",
-        )
-
-        contribution_filter = st.radio(
-            "Filtrer les contributions",
-            options=["Toutes", "Seulement positives", "Seulement négatives"],
-            index=0,
-            horizontal=True,
-        )
-
-        st.markdown("---")
-
-        positive_color = st.color_picker(
-            "Couleur des contributions positives", value="#ff7f0e"
-        )
-        negative_color = st.color_picker(
-            "Couleur des contributions négatives", value="#4a6fa5"
-        )
-
-        show_base_value = st.checkbox(
-            "Afficher la valeur de base (base value)", value=True
-        )
-
-    # --- Préparation fidèle aux données d'origine ---
-    df = pd.DataFrame(
-        {"Feature": features[:max_features], "Impact": values[:max_features]}
-    )
-
-    # Application du filtre
-    if contribution_filter == "Seulement positives":
-        df = df[df["Impact"] > 0]
-    elif contribution_filter == "Seulement négatives":
-        df = df[df["Impact"] < 0]
-
-    # Trier pour affichage waterfall (du plus petit au plus grand)
-    df = df.sort_values("Impact", ascending=True)
-
-    # --- Création du graphique ---
-    fig = go.Figure()
-
-    fig.add_trace(
-        go.Waterfall(
-            orientation="h",
-            measure=["relative"] * len(df),
-            x=df["Impact"],
-            y=df["Feature"],
-            base=base_value if show_base_value else 0,
-            decreasing={"marker": {"color": negative_color}},
-            increasing={"marker": {"color": positive_color}},
-            totals={"marker": {"color": "#d62728"}},
-        )
-    )
-
-    fig.update_layout(
-        title="Impact des caractéristiques sur le score",
-        height=600,
-        margin=dict(l=100, r=50, t=80, b=50),
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
-    )
-
-    st.plotly_chart(fig, use_container_width=True)
-
-
 # =========================================================================
 
 
@@ -454,64 +550,95 @@ def plot_feature_distribution(
     title_prefix="Distribution pour",
     height=400,
 ):
-    # Données
-    hist_data = full_data[feature_name].dropna()
-    client_feature_value = (
+    # Récupération des données
+    data = full_data[feature_name].dropna()
+    client_value = (
         client_data[feature_name].values[0]
         if hasattr(client_data[feature_name], "values")
         else client_data[feature_name]
     )
 
-    # Histogramme (données pour construire manuellement)
-    counts, bins = np.histogram(hist_data, bins=30)
-    bin_centers = 0.5 * (bins[1:] + bins[:-1])
+    # Détection automatique du type de variable
+    unique_vals = data.unique()
+    is_discrete = False
 
-    # Identifier le bin du client
-    client_bin_index = np.digitize(client_feature_value, bins) - 1
-    client_bin_index = np.clip(client_bin_index, 0, len(counts) - 1)
+    # 1. Détection des variables discrètes
+    if len(unique_vals) <= 20 or all(np.equal(unique_vals, unique_vals.astype(int))):
+        is_discrete = True
+        int_vals = data.astype(int)
+        min_val, max_val = int_vals.min(), int_vals.max()
+        bins = np.arange(min_val - 0.5, max_val + 1.5)
+        bin_labels = [str(i) for i in range(min_val, max_val + 1)]
+    else:
+        # 2. Cas continu avec règle de Sturges
+        n_bins = min(30, int(np.log2(len(data)) + 1))
+        counts, bins = np.histogram(data, bins=n_bins)
+        bin_labels = None
 
-    # Couleurs : base + une différente pour le bin client
-    bar_colors = [base_color] * len(counts)
-    bar_colors[client_bin_index] = client_bin_color
+    # Calcul des positions et largeurs des barres
+    if is_discrete:
+        bin_centers = bins[:-1] + 0.5
+        bar_width = 0.8  # Largeur réduite pour espacement
+    else:
+        bin_centers = 0.5 * (bins[1:] + bins[:-1])
+        bar_width = (bins[1] - bins[0]) * 0.9
 
-    # Figure manuelle avec go.Bar
+    # Recréer l'histogramme avec les bons bins
+    counts, _ = np.histogram(data, bins=bins)
+
+    # Trouver l'index du bin du client (méthode robuste)
+    if is_discrete:
+        client_bin_index = np.searchsorted(bins, client_value) - 1
+    else:
+        client_bin_index = np.clip(
+            np.digitize(client_value, bins) - 1, 0, len(counts) - 1
+        )
+
+    # Création de la figure
     fig = go.Figure()
+
+    # Ajout des barres avec couleur spéciale pour le bin client
+    colors = [
+        client_bin_color if i == client_bin_index else base_color
+        for i in range(len(counts))
+    ]
+
     fig.add_trace(
         go.Bar(
             x=bin_centers,
             y=counts,
-            marker_color=bar_colors,
-            width=(bins[1] - bins[0]) * 0.9,
-            hovertemplate="Valeur: %{x:.2f}<br>Nb clients: %{y}<extra></extra>",
+            width=bar_width,
+            marker_color=colors,
+            hovertemplate="<b>Valeur</b>: %{x}<br><b>Clients</b>: %{y}<extra></extra>",
+            name="Population",
         )
     )
 
-    # Ligne verticale pour le client
+    # Ajout ligne verticale pour le client
     fig.add_vline(
-        x=client_feature_value,
-        line_width=3,
-        line_dash="dash",
-        line_color=client_bin_color,
-        annotation_text="Client",
-        annotation_position="top",
+        x=client_value,
+        line=dict(color=client_bin_color, width=2, dash="dot"),
+        annotation_text=f"Client: {client_value:.2f}",
+        annotation_position="top right",
     )
 
-    # Échelle log si besoin
-    mean_val = np.mean(counts)
-    std_val = np.std(counts)
-    if std_val > 3 * mean_val:
-        fig.update_layout(yaxis_type="log")
+    # Mise en forme adaptative
+    if is_discrete:
+        fig.update_xaxes(tickvals=bin_centers, ticktext=bin_labels, type="category")
+    else:
+        fig.update_xaxes(tickformat=".1f")
 
-    # Mise en page
-    title_font_size = get_title_font_size(height)
+    if counts.max() / counts.min() > 100:
+        fig.update_yaxes(type="log", title="Nombre de clients (log)")
+
+    # Paramètres graphiques
     fig.update_layout(
-        title_text=f"{title_prefix} {feature_name}",
-        title_font=dict(size=title_font_size),
+        title=f"{title_prefix} {feature_name}",
+        bargap=0.05 if is_discrete else 0.01,
+        height=height,
         xaxis_title=feature_name,
         yaxis_title="Nombre de clients",
-        title_x=0.3,
-        height=height,
-        margin=dict(t=50, l=20, r=20, b=40),
+        showlegend=False,
     )
 
     return fig
