@@ -6,25 +6,29 @@ import joblib
 import shap
 import requests
 import streamlit as st
+import os
+from dotenv import load_dotenv
 
 # ========== Paramètres globaux ==========
-API_URL = "http://localhost:8000"
-API_KEY = "b678481b982dc71ab46e08255faefae5f73339c4f1339eec83edf10488502158"
-ARTIFACT_PATH = "../backend/models/lightgbm_production_artifact_20250415_081218.pkl"
-THRESHOLD = 0.0931515  # Seuil de risque
-TIMEOUT = 10  # seconds
+# API_URL = "http://localhost:8000"
+# API_KEY = "b678481b982dc71ab46e08255faefae5f73339c4f1339eec83edf10488502158"
+# ARTIFACT_PATH = "../backend/models/lightgbm_production_artifact_20250415_081218.pkl"
+# THRESHOLD = 0.0931515  # Seuil de risque
+# TIMEOUT = 10  # seconds
 
 # Charger .env
-# load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '..', '.env'))
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 
 # Charger les variables d'environnement
-# API_URL = os.getenv("API_URL")
-# API_KEY = os.getenv("API_KEY")
-# MODEL_PATH = os.getenv("MODEL_PATH")
-# THRESHOLD = float(os.getenv("THRESHOLD"))  # Attention ici : THRESHOLD doit être casté en float
-# COST_FN = int(os.getenv("COST_FN"))
-# COST_FP = int(os.getenv("COST_FP"))
-# GLOBAL_DATA_PATH = os.getenv("GLOBAL_DATA_PATH")
+API_URL = os.getenv("API_URL")
+API_KEY = os.getenv("API_KEY")
+MODEL_PATH = os.getenv("MODEL_PATH")
+THRESHOLD = float(
+    os.getenv("THRESHOLD")
+)  # Attention ici : THRESHOLD doit être casté en float
+COST_FN = int(os.getenv("COST_FN"))
+COST_FP = int(os.getenv("COST_FP"))
+GLOBAL_DATA_PATH = os.getenv("GLOBAL_DATA_PATH")
 
 # ===== Chargement des données =====
 
@@ -129,3 +133,40 @@ def fetch_local_shap_explanation(client_id: int):
     )
     response.raise_for_status()
     return response.json()
+
+
+@st.cache_data(show_spinner="Chargement des prédictions batch...", ttl=600)
+def fetch_batch_predictions(
+    df_clients: pd.DataFrame, filter_decision: str = None
+) -> pd.DataFrame:
+    """
+    Envoie un batch de clients à l’API FastAPI et récupère les prédictions.
+
+    Args:
+        df_clients (pd.DataFrame): Données des clients à prédire.
+        filter_decision (str, optional): "✅ Accepté", "❌ Refusé" ou None.
+
+    Returns:
+        pd.DataFrame: Résultats avec ['SK_ID_CURR', 'probability', 'decision']
+    """
+    if df_clients.empty:
+        return pd.DataFrame()
+
+    try:
+        batch_data = df_clients.to_dict(orient="records")
+        response = requests.post(f"{API_URL}/predict_batch", json={"data": batch_data})
+        response.raise_for_status()
+        results = response.json()
+
+        df_results = df_clients.copy()
+        df_results["probability"] = [r["probability"] for r in results]
+        df_results["decision"] = [r["decision"] for r in results]
+
+        if filter_decision in ["✅ Accepté", "❌ Refusé"]:
+            df_results = df_results[df_results["decision"] == filter_decision]
+
+        return df_results
+
+    except requests.exceptions.RequestException as e:
+        st.error(f"Erreur API lors de la prédiction batch : {e}")
+        return pd.DataFrame()

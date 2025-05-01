@@ -8,14 +8,30 @@ from utils.formatters import (
     format_years,
     parse_currency,
 )
+from dotenv import load_dotenv
+import os
+
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
 
 # ========== Paramètres globaux ==========
-API_URL = "http://localhost:8000"
-API_KEY = "b678481b982dc71ab46e08255faefae5f73339c4f1339eec83edf10488502158"
-ARTIFACT_PATH = "../backend/models/lightgbm_production_artifact_20250415_081218.pkl"
-THRESHOLD = 0.0931515  # Seuil de risque
-TIMEOUT = 10  # seconds
+# API_URL = "http://localhost:8000"
+# API_KEY = "b678481b982dc71ab46e08255faefae5f73339c4f1339eec83edf10488502158"
+# ARTIFACT_PATH = "../backend/models/lightgbm_production_artifact_20250415_081218.pkl"
+# THRESHOLD = 0.0931515  # Seuil de risque
+# TIMEOUT = 10  # seconds
+
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
+
+# Charger les variables d'environnement
+
+API_URL = os.getenv("API_URL")
+API_KEY = os.getenv("API_KEY")
+ARTIFACT_PATH = os.getenv("ARTIFACT_PATH")
+THRESHOLD = float(os.getenv("THRESHOLD"))  # THRESHOLD doit être casté en float
+COST_FN = int(os.getenv("COST_FN"))  # idem
+COST_FP = int(os.getenv("COST_FP"))
+GLOBAL_DATA_PATH = os.getenv("GLOBAL_DATA_PATH")
+TIMEOUT = 10  # Timeout pour les requêtes
 
 
 def prepare_client_info(row):
@@ -95,7 +111,8 @@ def create_interactive_grid(df, edit=True, grid_height=450, context=""):
     from st_aggrid import JsCode
 
     # Liste des libellés à désactiver
-    non_editable_labels = ["ID Client", "Type de logement", "Type d'emploi"]
+    # non_editable_labels = ["ID Client", "Type de logement", "Type d'emploi"]
+    non_editable_labels = ["ID Client"]
 
     # Configuration conditionnelle des cellules
     checkbox_disabler = JsCode(
@@ -163,6 +180,94 @@ def create_interactive_grid(df, edit=True, grid_height=450, context=""):
     )
 
     return grid_response["data"], grid_response
+
+
+# ==============
+
+
+def create_interactive_valeur_editor(df, edit=True, grid_height=450, context=""):
+    """
+    Crée une grille interactive permettant d'éditer la colonne 'Valeur',
+    sauf pour certaines lignes définies via la colonne 'Libellé'.
+    La colonne 'Afficher' est supprimée.
+    """
+    # Libellés pour lesquels l'édition est désactivée
+    non_editable_labels = ["ID Client"]
+
+    # Style pour désactiver visuellement la cellule
+    valeur_cell_style = JsCode(
+        f"""
+        function(params) {{
+            const libelle = params.data['Libellé'];
+            const disabledLabels = {non_editable_labels};
+            if (disabledLabels.includes(libelle)) {{
+                return {{
+                    'backgroundColor': '#7697ad',
+                    'color': '#d3d3d3',
+                    'cursor': 'not-allowed',
+                    'pointerEvents': 'none'
+                }};
+            }}
+            return null;
+        }}
+        """
+    )
+
+    # Rendre la cellule éditable ou non selon le libellé
+    valeur_cell_editable = JsCode(
+        f"""
+        function(params) {{
+            const libelle = params.data['Libellé'];
+            const disabledLabels = {non_editable_labels};
+            return !disabledLabels.includes(libelle);
+        }}
+        """
+    )
+
+    # Configuration AgGrid
+    gb = GridOptionsBuilder.from_dataframe(df)
+
+    # Colonne 'Valeur'
+    gb.configure_column(
+        "Valeur",
+        editable=valeur_cell_editable if edit else False,
+        cellStyle=valeur_cell_style,
+    )
+
+    # Colonne 'Libellé' non éditable
+    gb.configure_column(
+        "Libellé",
+        editable=False,
+        cellStyle=JsCode(
+            f"""
+            function(params) {{
+                const disabledLabels = {non_editable_labels};
+                if (disabledLabels.includes(params.value)) {{
+                    return {{'color': '#7697ad'}};
+                }}
+                return null;
+            }}
+            """
+        ),
+    )
+
+    # Options générales
+    gb.configure_grid_options(domLayout="normal", suppressRowClickSelection=True)
+
+    # Affichage de la grille
+    grid_response = AgGrid(
+        df,
+        gridOptions=gb.build(),
+        height=grid_height,
+        update_mode=GridUpdateMode.MODEL_CHANGED,
+        fit_columns_on_grid_load=True,
+        theme="streamlit",
+        allow_unsafe_jscode=True,
+        key=f"aggrid_valeur_{context}",
+    )
+
+    return grid_response["data"], grid_response
+    # ========================
 
 
 def build_feature_config():
@@ -233,6 +338,18 @@ def build_feature_config():
             "transform_func": None,
             "unit": "jours",
         },
+        "Type de logement": {
+            "api_feature": "NAME_HOUSING_TYPE_RENTED_APARTMENT",
+            "parse_func": lambda v: 1 if v == "Locataire" else 0,
+            "transform_func": None,
+            "unit": "",
+        },
+        "Statut marital": {
+            "api_feature": "NAME_FAMILY_STATUS_MARRIED",
+            "parse_func": lambda v: 1 if v == "Marié(e)" else 0,
+            "transform_func": None,
+            "unit": "",
+        },
     }
 
 
@@ -273,7 +390,89 @@ from utils.visuals import plot_boxplot_comparison
 
 
 def process_selection_and_display_plot(
-    grid_response, feature_config, genre_client, api_url, api_key
+    grid_response,
+    feature_config,
+    genre_client,
+    compare_group,
+    api_url,
+    api_key,
+    cols_per_row=1,
+    show_empty_info=False,
+):
+    """
+    Traite la sélection de ligne, appelle l'API pour obtenir les statistiques de population et affiche les boxplots en grille.
+    """
+    updated_df = grid_response["data"]
+    selected_rows = [row for _, row in updated_df.iterrows() if row["Afficher"]]
+
+    if not selected_rows:
+        if show_empty_info:
+            st.info("Aucune variable sélectionnée pour affichage.")
+        return
+
+    for i in range(0, len(selected_rows), cols_per_row):
+        cols = st.columns(cols_per_row)
+        for j, row in enumerate(selected_rows[i : i + cols_per_row]):
+            with cols[j]:
+                label = row["Libellé"]
+                valeur = row["Valeur"]
+
+                config = feature_config.get(label, {})
+                if not config:
+                    st.warning(f"Configuration manquante pour {label}")
+                    continue
+
+                try:
+                    # Construction des filtres
+                    if (
+                        compare_group == "Clients similaires"
+                        and genre_client is not None
+                    ):
+                        filters = {"CODE_GENDER": genre_client}
+
+                        for col in [
+                            "NAME_INCOME_TYPE_PENSIONER",
+                            "NAME_INCOME_TYPE_WORKING",
+                            "NAME_INCOME_TYPE_STUDENT",
+                            "ORGANIZATION_TYPE_SELF_EMPLOYED",
+                            "ORGANIZATION_TYPE_MILITARY",
+                        ]:
+                            if safe_get(row, col) == 1:
+                                filters[col] = 1
+
+                        if row.get("Type de logement") == "Locataire":
+                            filters["NAME_HOUSING_TYPE_RENTED_APARTMENT"] = 1
+                        if row.get("Statut marital") == "Marié(e)":
+                            filters["NAME_FAMILY_STATUS_MARRIED"] = 1
+                    else:
+                        filters = {}
+
+                    client_value = config["parse_func"](valeur)
+
+                    stats = fetch_population_stats(
+                        feature=config["api_feature"],
+                        filters=filters,
+                        api_url=api_url,
+                        api_key=api_key,
+                        sample_size=1000,
+                    )
+
+                    if stats:
+                        plot_boxplot_comparison(
+                            population_stats=stats,
+                            client_value=client_value,
+                            title=f"Position du client - {label}",
+                            unit=config["unit"],
+                            transform=config["transform_func"],
+                            height=400,
+                        )
+
+                except Exception as e:
+                    st.error(f"Erreur avec {label} : {str(e)}")
+
+
+def process_selection_and_display_plot0(
+    grid_response, feature_config, genre_client, compare_group, api_url, api_key
 ):
     """
     Traite la sélection de ligne, appelle l'API pour obtenir les statistiques de population et affiche un boxplot
@@ -297,13 +496,41 @@ def process_selection_and_display_plot(
                 if not config:
                     continue
 
+                # Construction des filtres d’égalité
+                if compare_group == "Clients similaires" and genre_client is not None:
+                    filters = {"CODE_GENDER": genre_client}
+
+                    # on peut aussi ajouter d’autres égalités simples :
+                    # type d’emploi
+                    for col in [
+                        "NAME_INCOME_TYPE_PENSIONER",
+                        "NAME_INCOME_TYPE_WORKING",
+                        "NAME_INCOME_TYPE_STUDENT",
+                        "ORGANIZATION_TYPE_SELF_EMPLOYED",
+                        "ORGANIZATION_TYPE_MILITARY",
+                    ]:
+                        if safe_get(row, col) == 1:
+                            filters[col] = 1
+
+                    # type de logement
+                    if row.get("Type de logement") == "Locataire":
+                        filters["NAME_HOUSING_TYPE_RENTED_APARTMENT"] = 1
+
+                    # statut marital
+                    if row.get("Statut marital") == "Marié(e)":
+                        filters["NAME_FAMILY_STATUS_MARRIED"] = 1
+
+                else:
+                    # population totale → pas de filtre
+                    filters = {}
+
                 # Conversion de la valeur
                 client_value = config["parse_func"](valeur)
 
                 # Appel API
                 stats = fetch_population_stats(
                     feature=config["api_feature"],
-                    filters={"CODE_GENDER": genre_client} if genre_client else {},
+                    filters=filters,
                     api_url=api_url,
                     api_key=api_key,
                     sample_size=1000,  # Ajouté pour correspondre à l'original

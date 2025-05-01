@@ -2,11 +2,19 @@
 
 import joblib
 import shap
-import requests
+from urllib.parse import urlparse
+from requests.exceptions import (
+    ConnectionError,
+    Timeout,
+    RequestException,
+    InvalidURL,
+    MissingSchema,
+)
+
 import streamlit as st
 import os
-import requests
 from dotenv import load_dotenv
+import pandas as pd
 
 # =================================================================================
 # API_URL = "http://localhost:8000"
@@ -32,17 +40,31 @@ TIMEOUT = 10  # Timeout pour les requêtes
 
 
 # --- Fonctions ---
-def check_api_health(timeout: int = 10) -> bool:
-    """Vérifie si l'API est disponible"""
+def is_valid_url(url: str) -> bool:
+    """Vérifie si l'URL a un schéma et un netloc (domaine + port valides)"""
+    try:
+        result = urlparse(url)
+        return all([result.scheme, result.netloc])
+    except:
+        return False
+
+
+def check_api_health(timeout: int = 10) -> str | bool:
+    """Vérifie si l'API est disponible. Retourne True ou un message d'erreur."""
+    if not is_valid_url(API_URL):
+        return "🚫 URL invalide – vérifie le format (ex: http://localhost:8000)"
+
     try:
         response = requests.get(f"{API_URL}/health", timeout=timeout)
         if response.status_code != 200:
-            st.error(f"API retourne {response.status_code}")
-            return False
+            return f"⚠️ L'API a répondu avec le code {response.status_code}"
         return True
-    except Exception as e:
-        st.error(f"L'API semble indisponible : {str(e)}")
-        return False
+    except (InvalidURL, MissingSchema):
+        return "🚫 URL invalide – vérifie le format (ex: http://localhost:8000)"
+    except (ConnectionError, Timeout):
+        return "❌ Impossible de se connecter – serveur backend non démarré ?"
+    except RequestException as e:
+        return f"⚠️ Problème lors de la requête : {str(e)}"
 
 
 @st.cache_data
@@ -128,3 +150,17 @@ def fetch_population_stats(feature, filters, api_url, api_key, sample_size=1000)
 
     except Exception as e:
         raise ValueError(f"Erreur lors de l'appel API : {str(e)}")
+
+
+@st.cache_data(ttl=3600)
+def fetch_test_data():
+    """Récupère les données de test depuis l'API"""
+    try:
+        response = requests.get(
+            f"{API_URL}/get_test_data", headers={"x-api-key": API_KEY}, timeout=TIMEOUT
+        )
+        response.raise_for_status()
+        return pd.DataFrame(response.json())
+    except Exception as e:
+        st.error(f"Erreur API : {str(e)}")
+        st.stop()

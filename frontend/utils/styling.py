@@ -2,6 +2,7 @@
 
 from st_aggrid.shared import JsCode
 
+
 def build_dynamic_styling(style_rules):
     full_js = "function(params) {\n"
     for libelle, js_func in style_rules.items():
@@ -13,8 +14,10 @@ def build_dynamic_styling(style_rules):
     full_js += "return {};\n}"
     return JsCode(full_js)
 
+
 style_rules = {
-    "Part des mensualités dans les revenus": JsCode("""
+    "Part des mensualités dans les revenus": JsCode(
+        """
         function(params) {
             const value = parseFloat(params.value.replace('%', '').replace(',', '.'));
             if (isNaN(value)) return {};
@@ -26,8 +29,10 @@ style_rules = {
                 return { 'color': 'white', 'backgroundColor': '#F44336' };
             }
         }
-    """),
-    "Ratio crédit/revenu": JsCode("""
+    """
+    ),
+    "Ratio crédit/revenu": JsCode(
+        """
         function(params) {
             const value = parseFloat(params.value.replace('%', '').replace(',', '.'));
             if (isNaN(value)) return {};
@@ -39,6 +44,6 @@ style_rules = {
                 return { 'color': 'white', 'backgroundColor': '#F44336' };
             }
         }
-    """),
-    # Ajoute ici d'autres règles si besoin...
+    """
+    ),
 }
