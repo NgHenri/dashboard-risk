@@ -1,161 +1,120 @@
-## 📝 **Description du projet — Scoring client pour "Prêt à dépenser"**
+# 📊 Dashboard de scoring de risque de crédit - Projet "Prêt à Dépenser"
 
-L'organisme de prêt *"Prêt à dépenser"* souhaite fournir à ses **conseillers clientèle** un outil d'aide à la décision leur permettant d'évaluer le risque de défaut d’un client avant l’octroi d’un prêt.
-
-### 🎯 Objectif
-Développer un **modèle de scoring fiable, explicable et intégré dans une application web** (via une API) permettant d’estimer, à partir des informations d’un client, s’il existe un **risque suffisant d’insolvabilité** pour refuser un prêt.
-
-Une **contrainte métier forte** est imposée :  
-> Le **coût d’un prêt accordé à un mauvais payeur est 10 fois (voire 100 fois) plus élevé** que celui d’un refus injustifié.
+## 🌟 Objectif du projet
+Ce projet vise à créer un outil d'aide à la décision pour les conseillers clientèle de l'organisme de prêt "Prêt à dépenser". L'objectif est d'évaluer le risque qu'un client présente un défaut de paiement afin d'aider à l'acceptation ou au refus d'une demande de crédit. Le modèle tient compte du fait qu'un faux négatif (accorder un crédit à un mauvais payeur) est beaucoup plus coûteux qu'un faux positif (refuser un bon payeur).
 
 ---
 
-## 📊 Données
+## 🧠 Approche Machine Learning
 
-- **Jeu d’entraînement** : 307 511 clients, 122 variables
-- **Variable cible** : défaut de paiement (environ 8% de défauts → données déséquilibrées)
-- **Jeu de production** : 50 000 nouveaux clients, avec données préremplies
+### 🔄 Données
+- Plus de **300 000 clients** avec 122 variables.
+- Environ **8 %** de défauts de paiement.
 
----
+### 🧬 Prétraitement et Feature Engineering
+- Nettoyage des données (valeurs aberrantes, outliers)
+- LabelEncoding / OneHotEncoding des variables catégorielles
+- Agrégations et création de nouvelles variables (ratios, différences, etc.)
+- Normalisation et gestion des valeurs manquantes
 
-## 🔧 Feature engineering
+### 📊 Modèles testés
+- DummyClassifier (baseline)
+- Logistic Regression
+- RandomForest
+- Gradient Boosting
+- XGBoost
+- **LightGBM** (meilleur modèle)
 
-Les transformations sont inspirées des meilleures pratiques du domaine (notamment les notebooks de référence sur Kaggle) :
-
-- Suppression d'outliers
-- Regroupement et transformation de jeux de données secondaires (bureau, previous_application, POS, etc.)
-- Encodage : Label Encoding / One-hot Encoding
-- Création de nouvelles variables (ratios, différences de jours, scores normalisés)
-- Traitement du déséquilibre : **SMOTE**, **class_weight**, ou **undersampling**
-- Nettoyage des colonnes et traitement des valeurs aberrantes
-
----
-
-## 🤖 Modélisation & suivi MLflow
-
-### 📚 Modèles testés :
-
-- `DummyClassifier` (baseline)
-- `LogisticRegression`
-- `RandomForestClassifier`
-- `XGBoostClassifier`
-- `GradientBoostingClassifier`
-- **`LightGBMClassifier` (modèle final)**
-
-Chaque modèle a été :
-
-- Entraîné avec **validation croisée**
-- Suivi avec **MLflow** (enregistrement des hyperparamètres, métriques, durée d’entraînement, artefacts)
-- Évalué avec des métriques classiques (**AUC, Accuracy, Recall, Confusion matrix**) mais aussi :
-  - Un **score métier personnalisé**, prenant en compte le **coût différentiel entre faux positifs et faux négatifs**
-  - Une **optimisation du seuil de décision** (proba) pour **minimiser ce score métier**
-
-💡 Le **modèle LightGBM**, avec `class_weight` et seuil optimisé, a offert **le meilleur compromis performance/coût métier/rapidité**.
+### ⚖️ Optimisation
+- **Métriques classiques** : AUC ROC, Accuracy, Recall, F1
+- **Score métier personnalisé** : `10 x FN + 1 x FP`
+- Optimisation du **seuil de décision** pour minimiser ce score
+- Validation croisée stratifieée avec pipelines intégrés (SMOTE + StandardScaler + Modèle)
 
 ---
 
-## 📦 Packaging du pipeline
-
-Un pipeline complet a été mis en place, incluant :
-
-- Imputation des valeurs manquantes
-- Normalisation / standardisation si nécessaire
-- Modèle LightGBM final
-- Enregistrement via `joblib` et MLflow
-- Chargement dynamique dans l’API FastAPI
+## 📈 Tracking & Expérimentation avec MLflow
+- Enregistrement de **tous les modèles**, hyperparamètres, métriques, temps d'exécution
+- Fonction générique `run_single_model()` pour automatiser le pipeline et le logging
+- Meilleur modèle enregistré comme **Registered Model** dans MLflow
 
 ---
 
 ## 🔍 Explicabilité
-
-- **Globale** : SHAP importance plot
-- **Locale** : SHAP values pour un client donné, affichées dans le dashboard
-- Ajout d’un score lisible pour le conseiller : risque faible / moyen / élevé
-
----
-
-## 📈 Analyse du Data Drift
-
-- Analyse menée avec **Evidently**
-- Comparaison entre jeux `train_samp` et `test_samp`
-- 35% des variables présentent un drift (ex. : `DAYS_BIRTH`, `EMPLOYED_TO_AGE_RATIO`, etc.)
-- Ces dérives sont à surveiller régulièrement en production pour maintenir la robustesse du modèle
+- **SHAP Values** pour explicabilité globale et locale
+- Visualisation dynamique dans l'interface utilisateur (Streamlit)
+- Présentation des variables les plus influentes pour chaque client
 
 ---
 
-## 🌐 Architecture logicielle
-
-- **Backend** (FastAPI) :
-  - Endpoint `/predict` : score + SHAP
-  - Endpoint `/health` : monitoring complet du système
-- **Frontend** (Streamlit) :
-  - Dashboard dynamique interrogeant uniquement l’API
-  - Aucun modèle local ni base de données stockée
-- **Déploiement** :
-  - Prêt pour un environnement **CI/CD**
-  - Intégration continue facilitée avec versionnement du modèle via MLflow
+## 🤖 Analyse de la robustesse et du Drift
+- Utilisation de **Evidently AI** pour la détection de **data drift** entre jeu d'entraînement et données en production
+- Plus de 35 % des colonnes impactées, notamment celles liées à l'âge
+- Recommandation : surveillance périodique continue
 
 ---
 
-## ✅ Résultat
+## 🚀 Déploiement
 
-Le système final permet aux conseillers d’obtenir :
+### 🚧 Backend (API FastAPI)
+- Prédiction à partir des données client
+- Retour du score et des valeurs SHAP
+- Modèles enregistrés sous Joblib ou Pickle
 
-- Un **score de risque** clair
-- Une **explication de la décision**
-- Un **processus fiable et automatisé**, intégrable dans leur environnement métier
+### 👁️ Frontend (Streamlit)
+- Application web utilisable par les conseillers
+- Interface graphique intuitive
+- Requêtes vers l'API via `api_requests.py`
 
+---
 
 ## 📂 Structure du projet
-dashboard-risk 
-.
-├── README.md
-├── assets
-│   └── style.css
-├── backend
-│   ├── data
-│   │   ├── test_1000_sample_for_api.csv
-│   │   ├── test_1000_sample_with_target.csv
-│   │   ├── test_2000_sample_for_api.csv
-│   │   ├── test_2000_sample_with_target.csv
-│   │   ├── test_500_sample_for_api.csv
-│   │   └── test_500_sample_with_target.csv
-│   ├── generate_api_key.py
-│   ├── main.py
-│   ├── model.py
-│   ├── models
-│   │   ├── inference_pipeline_20250413_17.joblib
-│   │   └── lightgbm_production_artifact_20250415_081218.pkl
-│   ├── requirements.txt
-│   ├── tests
-│   │   ├── test_config.py
-│   │   └── test_sanity.py
-│   └── utils.py
-├── environment.yml
-├── frontend
-│   ├── app.py
-│   ├── assets
-│   ├── config.py
-│   ├── requirements.txt
-│   ├── risk_gauge.py
-│   ├── static
-│   ├── tests│   
-│   │   └── test_project
-│   └── utils
-│       ├── api_requests.py
-│       ├── formatters.py
-│       ├── shap_utils.py
-│       ├── styling.py
-│       ├── user_interactions.py
-│       └── visuals.py
-├── git_push.sh
-├── htmlcov
-│   
-├── install_rclone.sh
-├── notebooks
-│   └── tmp.ipynb
-├── pytest.ini
-├── report.html
-├── requirements.txt
-├── setup.cfg
-└── sync_to_drive.sh
+```
+dashboard-risk/
+├── backend/           # API FastAPI, modèles et outils
+├── frontend/          # Interface utilisateur Streamlit
+├── assets/            # CSS et ressources
+├── notebooks/         # Exploration et notebooks de travail
+├── tests/             # Tests unitaires
+├── requirements.txt   # Dépendances backend
+├── environment.yml    # Environnement complet
+└── README.md
+```
+
+---
+
+## 🔧 Installation rapide
+```bash
+# 1. Créer un environnement conda
+conda env create -f environment.yml
+conda activate dashboard-risk
+
+# 2. Lancer l'API
+cd backend
+uvicorn main:app --reload
+
+# 3. Lancer l'app Streamlit
+cd ../frontend
+streamlit run app.py
+```
+
+---
+
+## 🎉 Résultats
+- Modèle final : **LightGBM avec class_weight + seuil optimisé**
+- AUC ROC : 0.76+, Score métier : ~0.51 (sur jeu test)
+- Interprétabilité intégrée + pipeline complet enregistré
+
+---
+
+## 🚀 Prochaines étapes possibles
+- Déploiement sur AWS ou Render
+- Monitoring en production (Evidently ou Prometheus)
+- Intégration continue avec GitHub Actions
+- Authentification utilisateurs et gestion de sessions (API key)
+
+---
+
+Pour toute question ou amélioration, n'hésitez pas à me contacter !
+
+[![Model](https://img.shields.io/badge/LightGBM-0.789_AUC-blue)](https://lightgbm.readthedocs.io/)
