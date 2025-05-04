@@ -85,8 +85,8 @@ API_URL = os.getenv("API_URL")
 API_KEY = os.getenv("API_KEY")
 
 
-# warnings.filterwarnings("ignore", category=UserWarning)
-# warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 # API_URL = "http://localhost:8000"  # URL de l'API backend
 # API_KEY = "b678481b982dc71ab46e08255faefae5f73339c4f1339eec83edf10488502158"
@@ -155,14 +155,22 @@ if df_test.empty:
 # Fonction pour charger le modèle et les artefacts associés (scaler, explainer, etc.)
 @st.cache_resource
 def load_model_artifacts():
-    artifacts = joblib.load(ARTIFACT_PATH)
-    model = artifacts["model"]
-    scaler = artifacts["scaler"]
-    features = artifacts["metadata"]["features"]
-    explainer = shap.TreeExplainer(model)
-
-    # Récupération des données via l'API pour SHAP global
     try:
+        artifacts = joblib.load(ARTIFACT_PATH)
+    except Exception as e:
+        import traceback
+
+        print("[ERREUR] Échec du chargement du modèle :")
+        traceback.print_exc()
+        raise RuntimeError("Impossible de charger les artefacts du modèle.")
+
+    try:
+        model = artifacts["model"]
+        scaler = artifacts["scaler"]
+        features = artifacts["metadata"]["features"]
+        explainer = shap.TreeExplainer(model)
+
+        # Récupération des données via l'API pour SHAP global
         response = requests.get(
             f"{API_URL}/global_shap_sample",
             headers={"x-api-key": API_KEY},
@@ -170,22 +178,35 @@ def load_model_artifacts():
         )
         response.raise_for_status()
         df_test_sample = pd.DataFrame(response.json())
-    except Exception as e:
-        st.error(f"Erreur API : {str(e)}")
-        st.stop()
 
-    # Calcul des SHAP values pour l'échantillon de test
-    df_test_sample_scaled = scaler.transform(df_test_sample[features])
-    global_shap_values = explainer.shap_values(df_test_sample_scaled)
+        # Calcul des SHAP values pour l'échantillon de test
+        df_test_sample_scaled = scaler.transform(df_test_sample[features])
+        global_shap_values = explainer.shap_values(df_test_sample_scaled)
+
+    except Exception as e:
+        print(f"[ERREUR] Post-chargement : {e}")
+        traceback.print_exc()
+        raise RuntimeError("Échec lors de la préparation des artefacts.")
 
     return model, scaler, features, explainer, global_shap_values, df_test_sample
 
 
-# ===== Chargement des artefacts du modèle =====
-model, scaler, features, explainer, global_shap_values, df_test_sample = (
-    load_model_artifacts()
-)
+try:
+    model, scaler, features, explainer, global_shap_values, df_test_sample = (
+        load_model_artifacts()
+    )
+except Exception as e:
+    import traceback
 
+    print("=== ERREUR DÉTAILLÉE ===")
+    traceback.print_exc()  # <--- CECI AFFICHE L’ERREUR RÉELLE
+    raise RuntimeError("Impossible de charger les artefacts du modèle.")
+
+
+path = "../backend/models/lightgbm_production_artifact_20250415_081218.pkl"
+
+artifacts = joblib.load(path)
+print(artifacts.keys())
 # =============================================================================
 # 📦 Initialisation et vérifications
 # =============================================================================

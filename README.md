@@ -118,3 +118,4 @@ streamlit run app.py
 Pour toute question ou amélioration, n'hésitez pas à me contacter !
 
 [![Model](https://img.shields.io/badge/LightGBM-0.789_AUC-blue)](https://lightgbm.readthedocs.io/)
+

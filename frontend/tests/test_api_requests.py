@@ -1,12 +1,12 @@
 import unittest
-from unittest.mock import patch
 from frontend.utils.api_requests import (
     fetch_client_ids,
     fetch_client_info,
     fetch_prediction,
 )
 from frontend.utils.shap_utils import fetch_local_shap_explanation
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
+import requests
 
 # Données JSON à tester
 mock_client_info = {
@@ -100,63 +100,73 @@ mock_client_info = {
 
 
 class TestApiRequests(unittest.TestCase):
-    # Simulation du comportement de l'API dans le test
     @patch("frontend.utils.api_requests.fetch_client_info")
-    def test_fetch_client_info(mock_get):
-        # On fait en sorte que la fonction retourne la structure JSON simulée
-        mock_get.return_value.status_code = 200
-        mock_get.return_value.json.return_value = mock_client_info
+    def test_fetch_client_info(self, mock_fetch):
+        # Données simulées
+        mock_client_info = {
+            "SK_ID_CURR": 400464,
+            "AMT_CREDIT": 343800,
+            "PAYMENT_RATE": 0.0490183246073298,
+            "NAME_INCOME_TYPE_WORKING": 1,
+        }
 
-        # Appel de la fonction de test
+        # Mock de la fonction
+        mock_fetch.return_value = mock_client_info
+
+        # Appel réel
         client_info = fetch_client_info(400464)
 
-        # Teste que les données sont retournées correctement
-        assert client_info["SK_ID_CURR"] == 400464
-        assert client_info["AMT_CREDIT"] == 343800
-        assert client_info["PAYMENT_RATE"] == 0.0490183246073298
-        assert client_info["NAME_INCOME_TYPE_WORKING"] == 1
+        # Assertions
+        self.assertEqual(client_info["SK_ID_CURR"], 400464)
+        self.assertEqual(client_info["AMT_CREDIT"], 343800)
+        self.assertAlmostEqual(client_info["PAYMENT_RATE"], 0.0490183246073298)
+        self.assertEqual(client_info["NAME_INCOME_TYPE_WORKING"], 1)
 
     @patch("frontend.utils.api_requests.fetch_client_info")
-    def test_fetch_client_info_not_found(self, mock_get):
-        mock_get.return_value.status_code = 404
-        client_info = fetch_client_info(999)  # Client ID qui n'existe pas
+    def test_fetch_client_info_not_found(self, mock_fetch):
+        # Simule un retour None ou erreur gérée
+        mock_fetch.return_value = None
+        client_info = fetch_client_info(999)
         self.assertIsNone(client_info)
 
 
-@patch("frontend.utils.shap_utils.fetch_local_shap_explanation")
+# Test fonctionnel en-dehors de classe
+@patch("frontend.utils.shap_utils.requests.get")
 def test_fetch_local_shap_explanation(mock_get):
-    # Données simulées que l'API retournerait pour un client donné
-    mock_response = {
+    # Simule la réponse JSON de l'API
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
         "values": [
             0.01305076156604987,
             0.07097157387902969,
             0.4857280408875004,
             0.020167035319394597,
         ],
-        "base_value": [0.19183999932179563],
+        "base_value": 0.19183999932179563,
         "features": ["EXT_SOURCE_1", "EXT_SOURCE_2", "EXT_SOURCE_3", "AMT_CREDIT"],
     }
 
-    # Configuration du mock pour simuler une réponse API
-    mock_get.return_value.status_code = 200
-    mock_get.return_value.json.return_value = mock_response
+    mock_get.return_value = mock_response
 
-    # Appel de la fonction
-    client_id = 400464
-    result = fetch_local_shap_explanation(client_id)
+    result = fetch_local_shap_explanation(400464)
 
-    # Vérifications des valeurs extraites
-    assert result["values"] == [
-        0.01305076156604987,
-        0.07097157387902969,
-        0.4857280408875004,
-        0.020167035319394597,
-    ]
-    assert result["base_value"] == [0.19183999932179563]
-    assert result["features"] == [
-        "EXT_SOURCE_1",
-        "EXT_SOURCE_2",
-        "EXT_SOURCE_3",
-        "AMT_CREDIT",
-    ]
-    assert mock_get.call_count == 1  # Vérifie que l'API a bien été appelée une fois
+    assert result["values"][:4] == mock_response.json.return_value["values"]
+    assert result["base_value"] == mock_response.json.return_value["base_value"]
+    assert result["features"] == mock_response.json.return_value["features"]
+    assert mock_get.call_count == 1
+
+
+@patch("frontend.utils.shap_utils.requests.get")
+def test_fetch_local_shap_explanation_not_found(mock_get):
+    # Simuler une réponse avec erreur HTTP (404 ou 500)
+    mock_response = MagicMock()
+    mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError(
+        "404 Not Found"
+    )
+    mock_get.return_value = mock_response
+
+    result = fetch_local_shap_explanation(999999)
+
+    assert result is None
+    mock_get.assert_called_once()

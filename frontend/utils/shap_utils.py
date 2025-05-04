@@ -128,11 +128,15 @@ def fetch_global_shap_matrix(sample_size=1000):
 
 @st.cache_data(ttl=300)
 def fetch_local_shap_explanation(client_id: int):
-    response = requests.get(
-        f"{API_URL}/shap/local/{client_id}", headers={"x-api-key": API_KEY}
-    )
-    response.raise_for_status()
-    return response.json()
+    try:
+        response = requests.get(
+            f"{API_URL}/shap/local/{client_id}", headers={"x-api-key": API_KEY}
+        )
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as e:
+        print(f"Erreur lors de la récupération des explications SHAP : {e}")
+        return None
 
 
 @st.cache_data(show_spinner="Chargement des prédictions batch...", ttl=600)
