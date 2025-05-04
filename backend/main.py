@@ -3,10 +3,6 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Security, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
-from fastapi_cache import FastAPICache
-from fastapi_cache.decorator import cache
-from fastapi_cache.backends.redis import RedisBackend
-from fastapi_cache.backends.inmemory import InMemoryBackend
 from pydantic import BaseModel
 from typing import List, Dict, Optional
 from pathlib import Path
@@ -23,6 +19,7 @@ import os
 import asyncio
 
 # Cache et Redis
+from fastapi_cache.decorator import cache
 from fastapi_cache import FastAPICache
 from fastapi_cache.backends.redis import RedisBackend
 from fastapi_cache.backends.inmemory import InMemoryBackend
