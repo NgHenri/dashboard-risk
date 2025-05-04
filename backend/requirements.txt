@@ -12,3 +12,4 @@ redis==5.0.1
 httpx==0.25.1
 fastapi_cache==0.1.0  
 upstash-redis==2.10.0  
+
