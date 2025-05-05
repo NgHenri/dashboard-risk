@@ -6,8 +6,6 @@ from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
 from typing import List, Dict, Optional
 from pathlib import Path
-from functools import lru_cache
-from upstash_redis.asyncio import Redis
 import joblib
 import numpy as np
 import shap
@@ -23,6 +21,7 @@ from fastapi_cache.decorator import cache
 from fastapi_cache import FastAPICache
 from fastapi_cache.backends.redis import RedisBackend
 from fastapi_cache.backends.inmemory import InMemoryBackend
+from functools import lru_cache
 from upstash_redis.asyncio import Redis
 
 # === 2. Configuration initiale ===
@@ -165,8 +164,8 @@ assert len(df_global) == len(
 ), f"Données/SHAP incohérents ({len(df_global)} vs {len(global_shap_matrix)})"
 
 # Après le précalcul
-print(f"Type SHAP global : {type(global_shap_values)}")
-print(f"Shape SHAP global : {global_shap_values.shape}")
+# print(f"Type SHAP global : {type(global_shap_values)}")
+# print(f"Shape SHAP global : {global_shap_values.shape}")
 
 # === 9. Liste des clients ===
 try:

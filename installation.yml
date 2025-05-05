@@ -1,0 +1,33 @@
+name: loan-env
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - evidently
+  - fastapi
+  - ipykernel
+  - joblib
+  - lightgbm
+  - lime
+  - matplotlib
+  - numpy
+  - openpyxl
+  - pandas
+  - pip
+  - plotly
+  - python=3.11
+  - requests
+  - scikit-learn
+  - seaborn
+  - shap
+  - streamlit
+  - typing-extensions
+  - uvicorn
+  - coverage
+  - pytest
+  - imbalanced-learn
+  - streamlit-aggrid
+  - vulture
+  - pytest-html
+  - pytest-cov
+prefix: /usr/local/Caskroom/miniforge/base/envs/loan-env
