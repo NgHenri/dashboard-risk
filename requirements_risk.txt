@@ -10,6 +10,7 @@ fastapi-cache2
 upstash-redis
 lightgbm==4.6.0
 redis==6.0.0
+
 #=============================================
 conda install -c conda-forge pyarrow
 pip install streamlit --no-deps --no-cache-dir
