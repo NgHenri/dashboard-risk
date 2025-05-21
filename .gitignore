@@ -7,7 +7,7 @@ __pycache__/
 *.pyd
 .Python
 *.sqlite3
-
+*.pyc
 # Jupyter Notebooks
 .ipynb_checkpoints
 
