@@ -431,7 +431,14 @@ def plot_feature_distribution(
     else:
         fig.update_xaxes(tickformat=".1f")
 
-    if counts.max() / counts.min() > 100:
+    # if counts.max() / counts.min() > 100:
+    # fig.update_yaxes(type="log", title="Nombre de clients (log)")
+
+    # Protection contre divide by zero pour l'échelle log
+    min_count = counts.min() if counts.size > 0 else 0
+    max_count = counts.max() if counts.size > 0 else 0
+    # On n’active le log que si tous les bins ont au moins 1 occurrence
+    if min_count > 0 and (max_count / min_count) > 100:
         fig.update_yaxes(type="log", title="Nombre de clients (log)")
 
     # Paramètres graphiques
@@ -453,6 +460,7 @@ def plot_feature_distribution(
 def plot_feature_comparison(
     df, feature_x, feature_y, plot_type="scatter", client_data=None
 ):
+
     # Vérification des features
     missing = [f for f in [feature_x, feature_y] if f not in df.columns]
     if missing:
@@ -616,3 +624,190 @@ def plot_client_position_in_group(df_results: pd.DataFrame, selected_client_id: 
         showlegend=False,
     )
     st.plotly_chart(fig, use_container_width=True)
+
+
+# ===========
+
+
+def plot_univariate_feature0(
+    df: pd.DataFrame,
+    feature: str,
+    client_value: float = None,
+    max_discrete_cardinality: int = 10,
+) -> go.Figure:
+    """
+    Trace automatiquement un histogramme (continu) ou un camembert (discret)
+    selon la nature et la cardinalité de la variable, et y marque la valeur du client.
+
+    Args:
+        df: DataFrame source.
+        feature: nom de la colonne à afficher.
+        client_value: valeur du client à repérer sur le graphique.
+        max_discrete_cardinality: seuil pour passer en mode discret.
+    """
+    series = df[feature].dropna()
+    n_unique = series.nunique()
+
+    # --- Cas discret (camembert) ---
+    if n_unique <= max_discrete_cardinality:
+        counts = series.value_counts().reset_index()
+        counts.columns = [feature, "count"]
+        # on repère la part du client si elle existe
+        if client_value is not None and client_value in counts[feature].values:
+            counts["pull"] = counts[feature].apply(
+                lambda x: 0.1 if x == client_value else 0
+            )
+        else:
+            counts["pull"] = 0
+
+        fig = px.pie(
+            counts,
+            names=feature,
+            values="count",
+            hole=0.4,
+            color_discrete_sequence=px.colors.qualitative.Vivid,
+            template="plotly_dark",
+        )
+        fig.update_traces(
+            pull=counts["pull"],
+            textposition="inside",
+            textinfo="percent+label",
+            marker=dict(line=dict(color="#2F2F2F", width=1)),
+        )
+        fig.update_layout(
+            title=f"Répartition de {feature} ({n_unique} modalités)",
+            uniformtext_minsize=12,
+            uniformtext_mode="hide",
+        )
+        return fig
+
+    # --- Cas continu (histogramme + boxplot) ---
+    fig = px.histogram(
+        df,
+        x=feature,
+        nbins=min(30, int(np.log2(len(series))) + 1),
+        marginal="box",
+        opacity=0.85,
+        template="plotly_dark",
+    )
+    # styling histogramme et boxplot (idem à ton code original)…
+    fig.update_traces(
+        selector=dict(type="histogram"),
+        marker=dict(line=dict(color="#1D7870", width=1.5)),
+    )
+    if len(fig.data) > 1:
+        fig.update_traces(
+            selector=dict(type="box"),
+            line=dict(color="#E76F51", width=2.5),
+            fillcolor="rgba(231, 111, 81, 0.4)",
+            marker=dict(color="#E76F51", size=3, opacity=0.6, symbol="diamond"),
+        )
+
+    # --- Tracer la ligne verticale du client ---
+    if client_value is not None:
+        fig.add_vline(
+            x=client_value,
+            line=dict(color="yellow", width=3, dash="dash"),
+            annotation_text="Client",
+            annotation_position="top right",
+            annotation_font_color="yellow",
+        )
+
+    fig.update_layout(
+        title=dict(text=f"Distribution de {feature}", font=dict(size=18)),
+        hoverlabel=dict(bgcolor="#2F2F2F"),
+        margin=dict(t=50, b=40),
+        showlegend=False,
+    )
+    return fig
+
+
+def plot_univariate_feature(
+    df: pd.DataFrame,
+    feature: str,
+    client_value: float = None,
+    max_discrete_cardinality: int = 10,
+) -> go.Figure:
+    """
+    Trace automatiquement un histogramme (continu) ou un camembert (discret)
+    selon la nature et la cardinalité de la variable, et y marque la valeur du client.
+
+    Args:
+        df: DataFrame source.
+        feature: nom de la colonne à afficher.
+        client_value: valeur du client à repérer sur le graphique.
+        max_discrete_cardinality: seuil pour passer en mode discret.
+    """
+    series = df[feature].dropna()
+    n_unique = series.nunique()
+
+    # --- Cas discret (camembert) ---
+    if n_unique <= max_discrete_cardinality:
+        counts = series.value_counts().reset_index()
+        counts.columns = [feature, "count"]
+        # on repère la part du client si elle existe
+        counts["pull"] = counts[feature].apply(
+            lambda x: 0.1 if x == client_value else 0
+        )
+
+        fig = px.pie(
+            counts,
+            names=feature,
+            values="count",
+            hole=0.4,
+            color_discrete_sequence=px.colors.qualitative.Vivid,
+            template="plotly_dark",
+        )
+        fig.update_traces(
+            pull=counts["pull"],
+            textposition="inside",
+            textinfo="percent+label",
+            marker=dict(line=dict(color="#2F2F2F", width=1)),
+        )
+        fig.update_layout(
+            title=f"Répartition de {feature} ({n_unique} modalités)",
+            uniformtext_minsize=12,
+            uniformtext_mode="hide",
+        )
+        return fig
+
+    # --- Cas continu (histogramme + boxplot) ---
+    fig = px.histogram(
+        df,
+        x=feature,
+        nbins=min(30, int(np.log2(len(series))) + 1),
+        marginal="box",
+        opacity=0.85,
+        template="plotly_dark",
+    )
+
+    # Amélioration du style
+    fig.update_traces(
+        selector=dict(type="histogram"),
+        marker=dict(line=dict(color="#1D7870", width=1.5)),
+    )
+    if len(fig.data) > 1:
+        fig.update_traces(
+            selector=dict(type="box"),
+            line=dict(color="#E76F51", width=2.5),
+            fillcolor="rgba(231, 111, 81, 0.4)",
+            marker=dict(color="#E76F51", size=3, opacity=0.6, symbol="diamond"),
+        )
+
+    # --- Tracer la ligne verticale du client ---
+    if client_value is not None:
+        fig.add_vline(
+            x=client_value,
+            line=dict(color="yellow", width=3, dash="dash"),
+            annotation_text="Client",
+            annotation_position="top right",
+            annotation_font_color="yellow",
+        )
+
+    fig.update_layout(
+        title=dict(text=f"Distribution de {feature}", font=dict(size=18)),
+        hoverlabel=dict(bgcolor="#2F2F2F"),
+        margin=dict(t=50, b=40),
+        showlegend=False,
+    )
+    return fig

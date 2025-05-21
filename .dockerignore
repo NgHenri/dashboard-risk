@@ -1,0 +1,27 @@
+# Fichiers Python compilés
+__pycache__/
+*.py[cod]
+
+# Environnements virtuels
+.env
+.venv
+env/
+venv/
+*.env
+
+# Fichiers système
+.DS_Store
+
+# Fichiers de logs
+*.log
+
+# Notebooks Jupyter
+*.ipynb
+
+# Cache pip
+pip-wheel-metadata/
+*.whl
+
+# Git
+.git
+.gitignore

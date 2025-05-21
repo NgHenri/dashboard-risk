@@ -45,7 +45,6 @@ from utils.api_requests import (
 
 # === Utils : SHAP & interprétabilité ===
 from utils.shap_utils import (
-    fetch_client_data_for_shap,
     fetch_client_shap_data,
     fetch_global_shap_matrix,
     fetch_local_shap_explanation,
@@ -73,8 +72,21 @@ from utils.visuals import (
     restore_discrete_types,
     plot_feature_comparison,
     plot_client_position_in_group,
+    plot_univariate_feature,
 )
 
+# === Utils : definition ====
+from utils.definition import (
+    display_feature_definition,
+    DEFINITIONS_VARIABLES,
+    PAIR_DEFINITIONS,
+)
+
+# === Utils : log ====
+from utils.log_conf import setup_logger
+import logging
+
+logger = setup_logger("LoanApp")
 # ===== Paramètres de configuration =====
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
@@ -87,6 +99,11 @@ API_KEY = os.getenv("API_KEY")
 
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
+
+# ===== Configuration initiale =====
+if "init" not in st.session_state:
+    # Code qui ne s'exécute qu'une seule fois
+    logger.info("Démarrage initial de l'application")
 
 # API_URL = "http://localhost:8000"  # URL de l'API backend
 # API_KEY = "b678481b982dc71ab46e08255faefae5f73339c4f1339eec83edf10488502158"
@@ -104,7 +121,9 @@ if check_result is not True:
     st.stop()
 
 st.set_page_config(layout="wide")
-st.title("🏦 Dashboard Crédit - Prédictions & Explicabilité")
+# st.title("🏦 Dashboard Home Credit Default Risk - Prédictions & Explicabilité")
+st.title("🏦 Dashboard Home Credit Default Risk")
+st.caption("Prédictions & Explicabilité")
 
 
 # ===== Chargement des données =====
@@ -143,7 +162,7 @@ def load_test_data_from_api():
 
 # Chargement des données depuis l'API
 df_test_raw = load_test_data_from_api()
-df_test = restore_discrete_types(df_test_raw, max_cardinality=15, verbose=True)
+df_test = restore_discrete_types(df_test_raw, max_cardinality=15, verbose=False)
 
 # Vérification si les données sont vides après chargement
 if df_test.empty:
@@ -191,22 +210,63 @@ def load_model_artifacts():
     return model, scaler, features, explainer, global_shap_values, df_test_sample
 
 
+# Chargement du modèle
 try:
     model, scaler, features, explainer, global_shap_values, df_test_sample = (
         load_model_artifacts()
     )
+    if not st.session_state.get("artifacts_loaded", False):
+        logger.info("Initialisation terminée")
+        st.session_state["artifacts_loaded"] = True
+    # Stockage dans la session
+    st.session_state.update(
+        {
+            "df_test": df_test,
+            "model": model,
+            "scaler": scaler,
+            "features": features,
+            "explainer": explainer,
+        }
+    )
 except Exception as e:
+    logger.exception("Échec du chargement du modèle")
+    st.error("Erreur modèle - voir les logs techniques")
+    # st.stop()
     import traceback
 
     print("=== ERREUR DÉTAILLÉE ===")
     traceback.print_exc()  # <--- CECI AFFICHE L’ERREUR RÉELLE
     raise RuntimeError("Impossible de charger les artefacts du modèle.")
 
+# ===== Vérification de l'état après initialisation =====
+else:
+    # Vérification de tous les éléments requis
+    required_keys = ["df_test", "model", "scaler", "features", "explainer"]
+    missing_keys = [key for key in required_keys if key not in st.session_state]
+
+    if missing_keys:
+        logger.error(f"Clés manquantes dans session_state: {missing_keys}")
+        st.error("État de session corrompu - réinitialisation nécessaire")
+        del st.session_state.init
+        st.experimental_rerun()
+
+# ===== Récupération sécurisée des données =====
+df_test = st.session_state.get("df_test", pd.DataFrame())
+model = st.session_state.get("model")
+scaler = st.session_state.get("scaler")
+features = st.session_state.get("features", [])
+explainer = st.session_state.get("explainer")
+
+# Vérification finale avant rendu
+if df_test.empty or not model:
+    st.error("État invalide - réinitialisez l'application")
+    st.stop()
+
 
 path = "../backend/models/lightgbm_production_artifact_20250415_081218.pkl"
 
 artifacts = joblib.load(path)
-print(artifacts.keys())
+# print(artifacts.keys())
 # =============================================================================
 # 📦 Initialisation et vérifications
 # =============================================================================
@@ -346,7 +406,7 @@ if submitted:
 # 📊 Onglet 1 : Prédiction
 # =============================================================================
 with tab1:
-    st.header("Info Client")
+    st.subheader("Info Client")
 
     # --- Container 1 - Grid et prédiction ---
     with st.container():
@@ -571,6 +631,12 @@ with tab1:
                 )
                 st.plotly_chart(dist2, use_container_width=True)
 
+            with st.container():
+                display_feature_definition(selected_pos_feature, DEFINITIONS_VARIABLES)
+            with st.container():
+                display_feature_definition(selected_neg_feature, DEFINITIONS_VARIABLES)
+
+
 # ========================
 # --- TAB 2 : EXPLORATION
 # ========================
@@ -616,6 +682,39 @@ with tab2:
                 )
             else:
                 st.warning("Configuration du genre client non disponible")
+
+    with st.container():
+        col_left, col_right = st.columns([1, 3])
+        with col_left:
+            st.subheader("Analyse univariée")
+            # Toutes les colonnes sauf l'ID
+            numeric = [col for col in df_test.columns if col != "SK_ID_CURR"]
+            selected_feature = st.selectbox("Choisir une variable :", numeric)
+        with col_right:
+            # Récupère la valeur du client pour la feature sélectionnée
+            client_val = st.session_state.client_row.iloc[0][selected_feature]
+            # Construction du DataFrame à passer à plot_univariate_feature
+        if compare_group == "Population totale":
+            df_plot = df_test
+
+        else:  # "Clients similaires"
+            # Exemple : on ne filtre que sur le genre
+            genre_code = int(st.session_state.client_row.iloc[0]["CODE_GENDER"])
+            df_plot = df_test[df_test["CODE_GENDER"] == genre_code]
+
+            if df_plot.empty:
+                st.warning("Aucun pair similaire trouvé pour ce client.")
+                df_plot = df_test  # fallback sur population totale
+
+        # Affichage du graphique univarié
+        with col_right:
+            fig = plot_univariate_feature(
+                df=df_plot, feature=selected_feature, client_value=client_val
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        # Définition de la variable sélectionnée
+        display_feature_definition(selected_feature, DEFINITIONS_VARIABLES)
 
 
 # ===================================
@@ -674,20 +773,28 @@ with tab3:
 
             choice = st.selectbox("Paire de variables", list(FEATURE_PAIRS.keys()))
             fx, fy = FEATURE_PAIRS[choice]
+            definition = PAIR_DEFINITIONS.get(choice, "Aucune définition disponible.")
             ptype = st.radio(
                 "Type graphique",
                 ["scatter", "histogram", "density", "histogram2d"],
                 horizontal=True,
             )
             plot_feature_comparison(df, fx, fy, ptype)
+            st.markdown(f"ℹ️ **Définition** : {definition}")
         with sub_custom:
-            numeric = df.select_dtypes("number").columns.tolist()
+            numeric = [
+                col for col in df.select_dtypes("number").columns if col != "SK_ID_CURR"
+            ]
             cx = st.selectbox("Variable X", numeric)
             cy = st.selectbox("Variable Y", numeric)
             ctype = st.radio(
                 "Type graphique", ["scatter", "histogram", "density"], horizontal=True
             )
             plot_feature_comparison(df, cx, cy, ctype)
+            with st.container():
+                display_feature_definition(cx, DEFINITIONS_VARIABLES)
+            with st.container():
+                display_feature_definition(cy, DEFINITIONS_VARIABLES)
 
     # --- RECOMMANDATION & SIMULATION BATCH ---
     with tab_recommandation:
@@ -733,11 +840,22 @@ with tab3:
             default_id = st.session_state.get(
                 "default_focus_id", res_df["SK_ID_CURR"].iloc[0]
             )
+
+            # Liste des ID disponibles après filtrage
+            available_ids = res_df["SK_ID_CURR"].tolist()
+
+            # Gestion du cas où l'ID par défaut n'existe plus dans les résultats filtrés
+            safe_index = (
+                available_ids.index(default_id) if default_id in available_ids else 0
+            )
+            # Option : Ajouter un warning si l'ID initial est filtré
+            if default_id not in available_ids:
+                st.warning(f"Le client {default_id} a été filtré par votre sélection !")
             client_choice = st.selectbox(
                 "Client pour focus:",
-                res_df["SK_ID_CURR"].tolist(),
+                available_ids,
                 key="focus_tab3",
-                index=res_df["SK_ID_CURR"].tolist().index(default_id),
+                index=safe_index,  # Index sécurisé
             )
 
             st.dataframe(res_df[["SK_ID_CURR", "probability", "decision"]])

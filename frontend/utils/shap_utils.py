@@ -96,24 +96,20 @@ def load_model_artifacts():
 
 
 # ==================================================================================
-def fetch_client_data_for_shap(client_id):
-    """Récupère les données formatées pour le calcul SHAP"""
+def fetch_client_shap_data(client_id: int, use_api_key: bool = True):
+    """
+    Appelle /client_shap_data/{client_id}.
+    Si use_api_key=True, ajoute l’en-tête x-api-key.
+    """
+    url = f"{API_URL}/client_shap_data/{client_id}"
+    headers = {"x-api-key": API_KEY} if use_api_key else {}
     try:
-        response = requests.get(
-            f"{API_URL}/client_shap_data/{client_id}",
-            headers={"x-api-key": API_KEY},
-            timeout=TIMEOUT,
-        )
+        response = requests.get(url, headers=headers, timeout=TIMEOUT)
         response.raise_for_status()
-        return pd.DataFrame([response.json()])
+        return response.json()
     except Exception as e:
-        st.error(f"Erreur API : {str(e)}")
-        return pd.DataFrame()
-
-
-def fetch_client_shap_data(client_id):
-    response = requests.get(f"{API_URL}/client_shap_data/{client_id}")
-    return response.json()
+        st.error(f"Erreur API SHAP data pour client {client_id} : {e}")
+        return {}
 
 
 @st.cache_data(ttl=600)

@@ -1,8 +1,10 @@
-# === 1. Imports ===
+# === 0. Imports ===
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Security, Query, Depends
+from fastapi import FastAPI, HTTPException, Security, Query, Depends, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
+from fastapi.responses import JSONResponse
+import time
 from pydantic import BaseModel
 from typing import List, Dict, Optional
 from pathlib import Path
@@ -15,33 +17,114 @@ import logging
 import sys
 import os
 import asyncio
+from contextlib import asynccontextmanager
+from redis.exceptions import TimeoutError, ConnectionError, RedisError
+from redis.backoff import ExponentialBackoff
 
 # Cache et Redis
 from fastapi_cache.decorator import cache
-from fastapi_cache import FastAPICache
+from redis.asyncio import Redis
+from redis.asyncio.retry import Retry
+from fastapi_cache import FastAPICache, coder as _fastapi_coder
 from fastapi_cache.backends.redis import RedisBackend
 from fastapi_cache.backends.inmemory import InMemoryBackend
 from functools import lru_cache
-from upstash_redis.asyncio import Redis
 
-# === 2. Configuration initiale ===
-# Chargement des variables d'environnement
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
+from cachetools import TTLCache, cached
+from collections.abc import AsyncIterator
 
-# Désactivation des warnings
+import re
+from redis import asyncio as aioredis
+import json
+
+# === 1. Chargement des variables d'environnement ===
+# load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
+env_path = os.path.abspath(os.path.join(os.getcwd(), "..", ".env"))
+load_dotenv(dotenv_path=env_path)
+
+# === 2. Désactivation des warnings inutiles ===
 warnings.filterwarnings("ignore", category=UserWarning)
 
-# === 3. Configuration du logger ===
-logger = logging.getLogger(__name__)
+
+# === 3. Logger global ===
+
+
+# — filtre global pour redaction —
+class RedisCredentialFilter(logging.Filter):
+    def filter(self, record):
+        record.msg = re.sub(
+            r"rediss://default:[^@]+@", "rediss://default:****@", str(record.msg)
+        )
+        return True
+
+
+logger = logging.getLogger("main")
 logger.setLevel(logging.INFO)
+logger.addFilter(RedisCredentialFilter())
 handler = logging.StreamHandler(sys.stdout)
 handler.setFormatter(
     logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 )
 logger.addHandler(handler)
 
-# === 4. Initialisation FastAPI ===
-app = FastAPI()
+
+async def warmup_redis(client: Redis, count: int = 2):
+    for i in range(count):
+        try:
+            await client.ping()
+        except Exception as e:
+            logger.warning(f"Ping Redis #{i+1} échoué : {e}")
+    logger.info(f"✅ Pool Redis préchauffé avec {count} connexions")
+
+
+_old_decode = _fastapi_coder.JsonCoder.decode
+
+
+def _jsoncoder_decode_compat(value):
+    if isinstance(value, str):
+        return json.loads(value)
+    return _old_decode(value)
+
+
+_fastapi_coder.JsonCoder.decode = staticmethod(_jsoncoder_decode_compat)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # === Startup ===
+    # 1) Initialise Redis
+    client = await init_redis_client()
+    await warmup_redis(client, count=2)
+    app.state.redis_client = client
+    if client:
+        FastAPICache.init(RedisBackend(client), prefix="demo-cache")
+        logger.info("Cache logging activé")
+    else:
+        FastAPICache.init(InMemoryBackend(), prefix="memory-only")
+        logger.warning("🛑 Redis non disponible, utilisant un cache en mémoire.")
+
+    # 2) Génère et injecte l'exemple aléatoire pour /predict
+    try:
+        example_data = random_client_example()  # renvoie juste le dict data
+        ClientData.model_config["json_schema_extra"]["example"] = {"data": example_data}
+        logger.info("✅ Exemple dynamique injecté dans ClientData")
+    except Exception as e:
+        logger.warning(f"⚠️ Impossible d'injecter l'exemple dynamique : {e}")
+
+    yield  # Fin du startup, début du runtime
+    # === Shutdown ===
+    if client:
+        try:
+            await client.close()
+            logger.info("🧹 Connexion Redis fermée proprement")
+        except Exception as e:
+            logger.warning(f"⚠️ Erreur à la fermeture Redis : {e}")
+    else:
+        logger.info("ℹ️ Aucun client Redis à fermer")
+
+
+# === 4. FastAPI app ===
+app = FastAPI(lifespan=lifespan)
 
 # === 5. Middleware CORS ===
 app.add_middleware(
@@ -52,65 +135,130 @@ app.add_middleware(
     allow_headers=["*", "x-api-key"],
 )
 
-# === 6. Sécurité et clé API ===
+# === 6. Clé API ===
 api_key_header = APIKeyHeader(name="x-api-key")
 API_KEY = os.getenv("API_KEY")
 API_URL = os.getenv("API_URL")
-redis_client = None
+
+# === 7. global ===
+LATENCY_THRESHOLD_MS = 100  # seuil acceptable
+REDIS_MEMORY_WARNING = 200  # Mo
 
 
+# === 8. Validation de la clé API ===
 async def validate_api_key(api_key: str = Security(api_key_header)):
     if api_key != API_KEY:
         raise HTTPException(status_code=403, detail="Clé API invalide")
     return api_key
 
 
-# === 7. Configuration Redis et Cache ===
-@app.on_event("startup")
-async def startup():
-    global redis_client
+# === 9. Initialisation dynamique de Redis ===
+
+
+async def init_redis_client() -> Redis | None:
+    logger.info("🧪 Appel de init_redis_client()")
     try:
-        # Vérification des variables d'environnement
-        redis_url = os.getenv("UPSTASH_REDIS_URL")
-        redis_token = os.getenv("UPSTASH_REDIS_TOKEN")
+        upstash_url = os.getenv("UPSTASH_REDIS_URL", "")
+        upstash_token = os.getenv("UPSTASH_REDIS_TOKEN", "")
 
-        if not redis_url or not redis_token:
-            raise ValueError("Configuration Redis manquante dans .env")
+        if upstash_url and upstash_token:
+            # Nettoyer et normaliser le host:port
+            host = upstash_url.replace("https://", "").replace("http://", "")
+            if ":" not in host:
+                host = f"{host}:6379"
 
-        # Conversion de l'URL
-        redis_url = redis_url.replace("https://", "rediss://")
+            redis_url = f"rediss://default:{upstash_token}@{host}"
+            logger.info(f"Upstash host: {host}")  # 👈 safe
+            logger.info(f"→ Upstash URI: {redis_url}")  # 🔒 sera automatiquement filtré
 
-        # Initialisation Redis
-        redis_client = Redis(url=redis_url, token=redis_token)
+            client = Redis.from_url(
+                redis_url,
+                decode_responses=True,
+                max_connections=20,
+                health_check_interval=30,
+                retry=Retry(ExponentialBackoff(), 3),
+                retry_on_timeout=True,
+                socket_connect_timeout=3,  # Timeout de connexion réduit
+                socket_timeout=10,
+                socket_keepalive=True,
+            )
+            logger.info("🔌 Connexion à Redis via Upstash")
+        else:
+            client = Redis.from_url("redis://localhost:6379", decode_responses=True)
+            logger.info("🖥️ Connexion à Redis local")
 
-        # Test de connexion
-        pong = await asyncio.wait_for(redis_client.ping(), timeout=3)
-        if pong != "PONG":
+        pong = await client.ping()
+        if pong is not True:
             raise ConnectionError("Réponse Redis invalide")
 
-        # Initialisation du cache
-        FastAPICache.init(RedisBackend(redis_client), prefix="demo-cache")
         logger.info("✅ Redis configuré avec succès")
+        return client
 
     except Exception as e:
-        redis_client = None
+        logger.error(f"⚠️ Cache mémoire activé - Erreur Redis : {e}")
         FastAPICache.init(InMemoryBackend())
-        logger.error(f"⚠️ Cache mémoire activé - Erreur Redis : {str(e)}")
+        return None
 
 
-# === 8. Logger de cache (optionnel) ===
-class CacheLogger:
+# === 11 Configuration Redis et Cache ===
+
+
+async def get_healthy_client(request: Request) -> Redis | None:
+    client = request.app.state.redis_client
+    if not client:
+        return None
+
+    try:
+        await client.ping()
+        return client
+    except (TimeoutError, ConnectionError, RedisError) as e:
+        logger.warning(f"Redis error: {e} → Reconnexion...")
+        try:
+            await client.aclose()  # Fermeture asynchrone
+        except Exception as e:
+            logger.error(f"Fermeture client échouée: {e}")
+
+        try:
+            new_client = await init_redis_client()  # Nouvelle tentative
+            request.app.state.redis_client = new_client
+            return new_client
+        except Exception as e:
+            logger.critical(f"Échec reconnexion Redis: {e}")
+            return None
+
+
+# === 10. LoggingRedisBackend ===
+class LoggingRedisBackend(RedisBackend):
     async def set(self, key: str, value: str, expire: int):
-        logger.info(f"SET CACHE: {key} (TTL: {expire}s)")
-        return await FastAPICache.backend.set(key, value, expire)
+        logger.info(
+            f"SET CACHE: {key} (TTL: {expire}s)"
+        )  # Log lors de la mise en cache
+        return await super().set(key, value, expire)
 
 
-FastAPICache.backend = CacheLogger()
+# === 12. Logger de cache (optionnel) ===
+async def get_redis(request: Request):
+    client = request.app.state.redis_client
+    if not client:
+        raise HTTPException(503, "Redis non initialisé")
+    return client
 
-# === 9. Variables globales  ===
-REDIS_MEMORY_WARNING = 200  # Mo
 
-# === 5. Chargement des artefacts ===
+# === 13. Script de rotation (à exécuter périodiquement)  ===
+
+import requests
+
+
+def rotate_redis_token():
+    headers = {"Authorization": f"Bearer {CURRENT_TOKEN}"}
+    response = requests.post(
+        "https://api.upstash.com/v2/tokens/rotate", headers=headers
+    )
+    new_token = response.json()["new_token"]
+    update_env_file("UPSTASH_REDIS_TOKEN", new_token)
+
+
+# === 14. Chargement des artefacts ===
 ARTIFACT_PATH = "models/lightgbm_production_artifact_20250415_081218.pkl"
 try:
     artifacts = joblib.load(ARTIFACT_PATH)
@@ -123,12 +271,12 @@ except Exception as e:
     logger.critical(f"Erreur de chargement des artefacts : {e}")
     raise RuntimeError("Impossible de charger les artefacts du modèle.")
 
-# === 6. Initialisation SHAP ===
+# === 15. Initialisation SHAP ===
 explainer = shap.Explainer(model)
 logger.info(f"Type de expected_value: {type(explainer.expected_value)}")
 logger.info(f"Valeur de expected_value: {explainer.expected_value}")
 
-# === 7. Chargement des données globales ===
+# === 16. Chargement des données globales ===
 GLOBAL_DATA_PATH = "data/test_2000_sample_for_api.csv"
 try:
     df_global = pd.read_csv(GLOBAL_DATA_PATH)[features]
@@ -139,7 +287,7 @@ except Exception as e:
     logger.critical(f"Erreur de chargement ou traitement des données globales : {e}")
     raise RuntimeError("Échec de la préparation des données globales.")
 
-# === 8. Calcul SHAP global dès le démarrage ===
+# === 17. Calcul SHAP global dès le démarrage ===
 try:
     global_shap_values = explainer.shap_values(df_global_scaled)
     if isinstance(global_shap_values, list):  # Cas classification binaire
@@ -163,11 +311,8 @@ assert len(df_global) == len(
     global_shap_matrix
 ), f"Données/SHAP incohérents ({len(df_global)} vs {len(global_shap_matrix)})"
 
-# Après le précalcul
-# print(f"Type SHAP global : {type(global_shap_values)}")
-# print(f"Shape SHAP global : {global_shap_values.shape}")
 
-# === 9. Liste des clients ===
+# === 18. Liste des clients ===
 try:
     full_df = pd.read_csv(GLOBAL_DATA_PATH)
     client_ids = full_df["SK_ID_CURR"].dropna().astype(int).unique().tolist()
@@ -177,7 +322,29 @@ except Exception as e:
     raise RuntimeError("Impossible de démarrer l'API - données corrompues")
 
 
-# ==== All data ====
+# ==== test ====
+@app.get("/")
+async def read_root():
+    return {"message": "Bienvenue sur l'API !"}
+
+
+@app.get("/cache-example")
+@cache(expire=30)
+async def cache_example():
+    logger.info("Cache utilisé")  # Log lors de l'appel de la fonction
+    return {"message": "Ce message est mis en cache pendant 60 secondes"}
+
+
+@app.get("/test-redis")
+async def test_redis():
+    redis_client = await app.state.redis_client
+    if redis_client is None:
+        return {"status": "❌ Redis non initialisé"}
+    try:
+        pong = await redis_client.ping()
+        return {"status": f"✅ Redis OK: {pong}"}
+    except Exception as e:
+        return {"status": f"❌ Erreur Redis: {str(e)}"}
 
 
 @app.get("/get_test_data")
@@ -195,7 +362,7 @@ async def get_test_data(_: str = Depends(validate_api_key)):
         raise HTTPException(status_code=500, detail="Erreur de chargement des données")
 
 
-# === stat de polulation
+# === stat de polulation =====================
 
 
 @app.post("/population_stats")
@@ -290,10 +457,26 @@ def get_client_info(client_id: int):
 
 
 # ===========
-
-
 class ClientData(BaseModel):
-    data: dict  # exemple : {"EXT_SOURCE_1": 0.12, "AMT_CREDIT": 350000, ...}
+    data: dict
+
+    model_config = {
+        "json_schema_extra": {"example": {}}  # on va remplacer ça au startup
+    }
+
+
+# fonction “random” (pas de route, juste un utilitaire)
+def random_client_example() -> dict:
+    if full_df.empty:
+        raise RuntimeError("full_df vide")
+
+    row = full_df.sample(1).iloc[0].to_dict()
+    client_id = row.pop("SK_ID_CURR", None)
+    if client_id is None:
+        raise RuntimeError("SK_ID_CURR manquant")
+
+    # On retourne juste le champ `data` car on ne veut préremplir que `data`
+    return row
 
 
 class BatchPredictionRequest(BaseModel):
@@ -632,44 +815,59 @@ def get_global_shap_matrix(
         )
 
 
-# ===== control =======
-@cache(expire=30)  # Cache 30 secondes
-async def get_redis_memory_usage(redis_client: Redis) -> str:
-    """Retourne l'utilisation mémoire de Redis avec gestion d'erreur"""
-    try:
-        info = await redis_client.info("memory")
-        return f"{int(info['used_memory'])/1e6:.2f} MB"
-    except Exception as e:
-        logger.error(f"Erreur mémoire Redis : {str(e)}", exc_info=True)
-        return "N/A"
-
-
 # === health ==========
 #
 #       control et memory
 #
 # ===== control =======
-@cache(expire=30)
-async def get_redis_memory_usage(redis_client):
-    """Récupère l'utilisation mémoire de Redis"""
+
+
+# ===== control =======
+# un cache TTL en mémoire : max 1 entrée, expire au bout de 30 s
+# En haut de ton module
+_from_cache = {"value": None, "ts": 0.0}
+CACHE_TTL = 30.0  # secondes
+
+
+async def get_redis_memory_usage(redis_client: Redis) -> float:
+    """
+    Retourne l'utilisation mémoire de Redis en MB avec un TTL de 30s.
+    """
+    now = time.time()
+    # Si on est encore dans le TTL, on renvoie l'ancienne valeur
+    if _from_cache["value"] is not None and now - _from_cache["ts"] < CACHE_TTL:
+        return _from_cache["value"]
+
+    # Sinon on recharge depuis Redis
     try:
         info = await redis_client.info("memory")
-        return f"{int(info['used_memory']) / 1e6:.2f} MB"
-    except Exception as e:
-        logger.error(f"Erreur mémoire Redis : {str(e)}")
-        return "N/A"
+        used = info.get("used_memory", 0)
+        if isinstance(used, (bytes, bytearray)):
+            used = used.decode()
+        used = int(used) if isinstance(used, str) else used
+        mb = used / 1_000_000
+    except Exception:
+        mb = -1.0
+
+    # On met à jour le cache
+    _from_cache["value"] = mb
+    _from_cache["ts"] = now
+    return mb
 
 
 # ===== health check endpoint =====
+
+
 @app.get("/health")
-async def health_check():
+async def health_check(redis_client=Depends(get_redis)):
     """Endpoint de santé complet avec monitoring Redis"""
     checks = {
         "status": "API opérationnelle 🚀",
         "redis": {
-            "status": "active" if redis_client else "inactive",
+            "status": "inactive",
             "cache_type": "redis" if redis_client else "memory",
             "memory_used": "N/A",
+            "latency_ms": None,
         },
         "model": {
             "loaded": model is not None,
@@ -697,23 +895,34 @@ async def health_check():
         },
     }
 
-    try:
-        # Vérification Redis seulement si le client est initialisé
-        if redis_client:
-            checks["redis"]["status"] = "active"
-            try:
-                checks["redis"]["memory_used"] = await get_redis_memory_usage(
-                    redis_client
-                )
-                if await redis_client.ping() != "PONG":
-                    checks["redis"]["status"] = "unstable"
-            except Exception as e:
-                checks["redis"]["status"] = f"error: {str(e)}"
-                logger.error(f"Erreur Redis: {str(e)}")
+    # Vérification Redis avec ping et latence
+    if redis_client:
+        try:
+            t0 = time.perf_counter()
+            pong = await redis_client.ping()
+            latency = (time.perf_counter() - t0) * 1000
+            latency_ms = round(latency, 2)
 
-    except Exception as e:
-        logger.error(f"Erreur globale: {str(e)}")
-        checks["redis"]["status"] = "error"
+            # Déterminer le statut
+            if pong and latency_ms < LATENCY_THRESHOLD_MS:
+                checks["redis"]["status"] = "active"
+            elif pong:
+                checks["redis"]["status"] = "unstable"
+                logger.warning(f"⚠️ Latence Redis élevée : {latency_ms:.2f} ms")
+            else:
+                checks["redis"]["status"] = "unstable"
+                logger.warning("⚠️ Redis a répondu mais sans 'pong' explicite")
+
+            checks["redis"]["latency_ms"] = latency_ms
+            # checks["redis"]["memory_used"] = await get_redis_memory_usage(redis_client)
+            used_mb = await get_redis_memory_usage(redis_client)
+            checks["redis"]["memory_used"] = (
+                f"{used_mb:.2f} MB" if used_mb >= 0 else "N/A"
+            )
+
+        except Exception as e:
+            checks["redis"]["status"] = f"error: {str(e)}"
+            logger.error(f"❌ Erreur Redis : {str(e)}")
 
     # Détermination du statut global
     critical_services = [
@@ -721,8 +930,7 @@ async def health_check():
         checks["scaler"]["loaded"],
         checks["features"]["loaded"],
         checks["data"]["global_ready"],
-        checks["redis"]["status"]
-        in ["active", "unstable"],  # Considère Redis comme non critique
+        checks["redis"]["status"] in ["active", "unstable"],  # Redis non critique
     ]
 
     if not all(critical_services):
@@ -736,17 +944,5 @@ async def health_check():
     ):
         checks["status"] = "🟡 API partiellement opérationnelle"
 
-    return checks
-
-
-@app.on_event("shutdown")
-async def shutdown():
-    global redis_client
-    if redis_client:
-        try:
-            await redis_client.aclose()
-            logger.info("🧹 Connexion Redis fermée proprement")
-        except Exception as e:
-            logger.warning(f"⚠️ Erreur à la fermeture Redis : {str(e)}")
-    else:
-        logger.info("ℹ️ Aucun client Redis à fermer")
+    code = 200 if checks["redis"]["status"] in ("active", "unstable") else 503
+    return JSONResponse(checks, status_code=code)

@@ -1,0 +1,29 @@
+# Étape 1 : image légère avec Python
+FROM python:3.11-slim
+
+# Étape 2 : installation des paquets système requis pour pyarrow
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cmake \
+    build-essential \
+    g++ \
+    curl \
+    git \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Étape 3 : création d’un répertoire de travail
+WORKDIR /app
+
+# Étape 4 : copie du fichier requirements
+COPY frontend/requirements.txt .
+
+# Étape 5 : installation des dépendances Python
+RUN pip install --upgrade pip
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Étape 6 : copie du code Streamlit
+COPY frontend .
+
+# Étape 7 : définition du port et de la commande de démarrage
+EXPOSE 8501
+CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
