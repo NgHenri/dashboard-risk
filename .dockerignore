@@ -8,7 +8,7 @@ __pycache__/
 env/
 venv/
 *.env
-
+.risk/
 # Fichiers système
 .DS_Store
 

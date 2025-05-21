@@ -16,7 +16,7 @@ env/
 .venv/
 venv/
 loan-env/
-
+.risk/
 # VS Code / IDE
 .vscode/
 .idea/
