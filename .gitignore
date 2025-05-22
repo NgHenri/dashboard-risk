@@ -17,6 +17,8 @@ env/
 venv/
 loan-env/
 .risk/
+.conda/
+
 # VS Code / IDE
 .vscode/
 .idea/
@@ -58,3 +60,4 @@ coverage/
 reports/
 outputs/
 
+.ipynb_checkpoints/
