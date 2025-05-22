@@ -12,3 +12,4 @@ uvicorn[standard]
 fastapi-cache2
 upstash-redis
 redis==6.0.0
+requests==2.32.3
