@@ -30,7 +30,7 @@ from fastapi_cache.backends.redis import RedisBackend
 from fastapi_cache.backends.inmemory import InMemoryBackend
 from functools import lru_cache
 
-from cachetools import TTLCache, cached
+# from cachetools import TTLCache, cached
 from collections.abc import AsyncIterator
 
 import re
