@@ -247,8 +247,14 @@ def rotate_redis_token():
     update_env_file("UPSTASH_REDIS_TOKEN", new_token)
 
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # === 14. Chargement des artefacts ===
-ARTIFACT_PATH = "models/lightgbm_production_artifact_20250415_081218.pkl"
+# ARTIFACT_PATH = "models/lightgbm_production_artifact_20250415_081218.pkl"
+ARTIFACT_PATH = os.path.join(
+    BASE_DIR, "models", "lightgbm_production_artifact_20250415_081218.pkl"
+)
+
 try:
     artifacts = joblib.load(ARTIFACT_PATH)
     model = artifacts["model"]
@@ -266,7 +272,9 @@ logger.info(f"Type de expected_value: {type(explainer.expected_value)}")
 logger.info(f"Valeur de expected_value: {explainer.expected_value}")
 
 # === 16. Chargement des données globales ===
-GLOBAL_DATA_PATH = "data/test_2000_sample_for_api.csv"
+# GLOBAL_DATA_PATH = "data/test_2000_sample_for_api.csv"
+GLOBAL_DATA_PATH = os.path.join(BASE_DIR, "data", "test_2000_sample_for_api.csv")
+
 try:
     df_global = pd.read_csv(GLOBAL_DATA_PATH)[features]
     df_global_scaled = scaler.transform(df_global)  # Doit être un array numpy 2D
