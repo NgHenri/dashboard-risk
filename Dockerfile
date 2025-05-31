@@ -26,7 +26,7 @@ COPY backend .
 COPY backend/data ./data
 
 # Étape 8 : définition du port et de la commande de démarrage
-EXPOSE 8000
+EXPOSE 10000
 
 # Copie du script d'entrée
 COPY entrypoint.sh /entrypoint.sh
