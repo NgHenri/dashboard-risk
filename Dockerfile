@@ -27,4 +27,9 @@ COPY backend/data ./data
 
 # Étape 8 : définition du port et de la commande de démarrage
 EXPOSE 8000
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT}"]
+
+# Copie du script d'entrée
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+CMD ["/entrypoint.sh"]
