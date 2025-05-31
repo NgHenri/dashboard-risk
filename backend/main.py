@@ -324,7 +324,8 @@ except Exception as e:
 
 @app.get("/", include_in_schema=False)
 async def read_root():
-    return {"message": "Bienvenue sur l'API !"}
+    # return {"message": "Bienvenue sur l'API !"}
+    return JSONResponse(status_code=200, content={"message": "Bienvenue sur l'API !"})
 
 
 @app.get("/cache-example", include_in_schema=False)
