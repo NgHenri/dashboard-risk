@@ -27,4 +27,4 @@ COPY backend/data ./data
 
 # Étape 8 : définition du port et de la commande de démarrage
 EXPOSE 8000
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT}"]
