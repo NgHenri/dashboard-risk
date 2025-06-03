@@ -18,7 +18,17 @@ import joblib
 from matplotlib import pyplot as plt
 
 # === Modules internes ===
-import config
+from config import (
+    API_URL,
+    API_KEY,
+    TIMEOUT,
+    THRESHOLD,
+    BATCH_SIZE,
+    ARTIFACT_PATH,
+    TIMEOUT_GLOBAL,
+    RETRY_EVERY,
+)
+
 from risk_gauge import show_risk_gauge, display_risk_message, animate_risk_gauge
 
 # === Composants externes spécifiques ===
@@ -36,7 +46,7 @@ from utils.styling import style_rules, build_dynamic_styling
 
 # === Utils : interactions avec l'API ===
 from utils.api_requests import (
-    check_api_health,
+    connect_api,
     fetch_client_ids,
     fetch_client_info,
     fetch_prediction,
@@ -88,40 +98,38 @@ import logging
 
 logger = setup_logger("LoanApp")
 # ===== Paramètres de configuration =====
-
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
-# load_dotenv()
-
-API_URL = os.getenv("API_URL")
-# print("🛠️ API_URL:", API_URL)
-API_KEY = os.getenv("API_KEY")
-
+# load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 # ===== Configuration initiale =====
 if "init" not in st.session_state:
-    # Code qui ne s'exécute qu'une seule fois
     logger.info("Démarrage initial de l'application")
-
-# API_URL = "http://localhost:8000"  # URL de l'API backend
-# API_KEY = "b678481b982dc71ab46e08255faefae5f73339c4f1339eec83edf10488502158"
-ARTIFACT_PATH = "../backend/models/lightgbm_production_artifact_20250415_081218.pkl"  # Chemin vers l'artefact du modèle
-THRESHOLD = 0.0931515  # Seuil de risque
-TIMEOUT = 10  # Timeout pour les requêtes API (en secondes)
-BATCH_SIZE = 200  # Taille des lots pour les prédictions
+    st.session_state["init"] = True
+# print("🛠️ API_URL:", API_URL)
 
 # ===== Vérification de la connexion API =====
 # Fonction de vérification
 # ===== Vérification de la connexion API =====
-check_result = check_api_health(TIMEOUT)
-if check_result is not True:
-    st.error(check_result)
-    st.stop()
 
-st.set_page_config(layout="wide")
-# st.title("🏦 Dashboard Home Credit Default Risk - Prédictions & Explicabilité")
+st.set_page_config(
+    page_title="Credit Default Risk Dashboard",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# 4️⃣ Lancement de la connexion
+if "api_available" not in st.session_state:
+    st.session_state.api_available = connect_api(
+        timeout=TIMEOUT_GLOBAL, retry_every=RETRY_EVERY
+    )
+
+if not st.session_state.api_available:
+    st.stop()
+# st.set_page_config(layout="wide")
 st.title("🏦 Dashboard Home Credit Default Risk")
 st.caption("Prédictions & Explicabilité")
 
@@ -263,9 +271,7 @@ if df_test.empty or not model:
     st.stop()
 
 
-path = "../backend/models/lightgbm_production_artifact_20250415_081218.pkl"
-
-artifacts = joblib.load(path)
+artifacts = joblib.load(ARTIFACT_PATH)
 # print(artifacts.keys())
 # =============================================================================
 # 📦 Initialisation et vérifications
@@ -779,7 +785,8 @@ with tab3:
                 ["scatter", "histogram", "density", "histogram2d"],
                 horizontal=True,
             )
-            plot_feature_comparison(df, fx, fy, ptype)
+            client_data = st.session_state.get("client_data")
+            plot_feature_comparison(df, fx, fy, ptype, client_data=client_data)
             st.markdown(f"ℹ️ **Définition** : {definition}")
         with sub_custom:
             numeric = [
@@ -790,7 +797,7 @@ with tab3:
             ctype = st.radio(
                 "Type graphique", ["scatter", "histogram", "density"], horizontal=True
             )
-            plot_feature_comparison(df, cx, cy, ctype)
+            plot_feature_comparison(df, cx, cy, ctype, client_data=client_data)
             with st.container():
                 display_feature_definition(cx, DEFINITIONS_VARIABLES)
             with st.container():
