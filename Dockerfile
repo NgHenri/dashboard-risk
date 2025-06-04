@@ -25,7 +25,10 @@ COPY backend .
 # Étape 7 : copie du csv
 COPY backend/data ./data
 
-# Étape 8 : définition du port et de la commande de démarrage
+# ✅ Étape 8 : copie du modèle
+COPY backend/models ./models
+
+# Étape 9 : définition du port et de la commande de démarrage
 EXPOSE $PORT
 
 # Copie du script d'entrée
