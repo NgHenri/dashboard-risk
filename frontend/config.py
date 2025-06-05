@@ -41,7 +41,15 @@ def _get_int(key: str, default: int) -> int:
         raise ValueError(f"❌ La variable '{key}' doit être un int valide.")
 
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
+# Chemin du fichier courant
+current_path = Path(__file__).resolve()
+
+# Si on est en local (structure projet avec dossier parent), sinon Render (copié à la racine /app)
+if (current_path.parent / "models").exists():
+    ROOT_DIR = current_path.parent
+else:
+    ROOT_DIR = current_path.parent.parent
+
 artifact_path_str = os.getenv("ARTIFACT_PATH")
 
 if not artifact_path_str:
