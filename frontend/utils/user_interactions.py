@@ -1,3 +1,4 @@
+# frontend/utils/user_interactions.py
 import pandas as pd
 import streamlit as st
 from utils.formatters import (
@@ -8,30 +9,30 @@ from utils.formatters import (
     format_years,
     parse_currency,
 )
-from dotenv import load_dotenv
+
+# from dotenv import load_dotenv
 import os
 
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
 
-# ========== Paramètres globaux ==========
-# API_URL = "http://localhost:8000"
-# API_KEY = "b678481b982dc71ab46e08255faefae5f73339c4f1339eec83edf10488502158"
-# ARTIFACT_PATH = "../backend/models/lightgbm_production_artifact_20250415_081218.pkl"
-# THRESHOLD = 0.0931515  # Seuil de risque
-# TIMEOUT = 10  # seconds
+from config import API_URL, API_KEY, TIMEOUT
 
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
+
+# ========== Paramètres globaux ==========
+
+# load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 
 # Charger les variables d'environnement
 
-API_URL = os.getenv("API_URL")
-API_KEY = os.getenv("API_KEY")
-ARTIFACT_PATH = os.getenv("ARTIFACT_PATH")
-THRESHOLD = float(os.getenv("THRESHOLD"))  # THRESHOLD doit être casté en float
-COST_FN = int(os.getenv("COST_FN"))  # idem
-COST_FP = int(os.getenv("COST_FP"))
-GLOBAL_DATA_PATH = os.getenv("GLOBAL_DATA_PATH")
-TIMEOUT = 10  # Timeout pour les requêtes
+# API_URL = "https://dashboard-risk.onrender.com"
+
+# API_KEY = os.getenv("API_KEY")
+# ARTIFACT_PATH = os.getenv("ARTIFACT_PATH")
+# THRESHOLD = float(os.getenv("THRESHOLD"))  # THRESHOLD doit être casté en float
+# COST_FN = int(os.getenv("COST_FN"))  # idem
+# COST_FP = int(os.getenv("COST_FP"))
+# GLOBAL_DATA_PATH = os.getenv("GLOBAL_DATA_PATH")
+# TIMEOUT = 10  # Timeout pour les requêtes
 
 
 def prepare_client_info(row):

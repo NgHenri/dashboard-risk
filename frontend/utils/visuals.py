@@ -529,7 +529,7 @@ def plot_feature_comparison(
         fig.add_trace(
             go.Scatter(
                 x=[client_data[feature_x]],
-                y=[client_data[feature_y]] if plot_type != "histogram" else [None],
+                y=[client_data[feature_y]],
                 mode="markers",
                 marker=dict(
                     color="#E76F51",
@@ -538,6 +538,12 @@ def plot_feature_comparison(
                     symbol="diamond",
                 ),
                 name="Position du client",
+                customdata=[[client_data[feature_x], client_data[feature_y]]],
+                hovertemplate=(
+                    f"<b>Client sélectionné</b><br>"
+                    f"{feature_x}: %{{customdata[0]:.2f}}<br>"
+                    f"{feature_y}: %{{customdata[1]:.2f}}<extra></extra>"
+                ),
             )
         )
 

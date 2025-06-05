@@ -13,33 +13,32 @@ from requests.exceptions import (
 
 import streamlit as st
 import os
-from dotenv import load_dotenv
-import pandas as pd
+import time
 
-# =================================================================================
-# API_URL = "http://localhost:8000"
-# API_KEY = "b678481b982dc71ab46e08255faefae5f73339c4f1339eec83edf10488502158"
-# ARTIFACT_PATH = "../backend/models/lightgbm_production_artifact_20250415_081218.pkl"
-# THRESHOLD = 0.0931515  # Seuil de risque
-# TIMEOUT = 10  # seconds
-# ==================================================================================
+# from dotenv import load_dotenv
+import pandas as pd
+from config import API_URL, API_KEY, TIMEOUT
+
 
 # Charger .env
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
+# load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 
 # Charger les variables d'environnement
 
-API_URL = os.getenv("API_URL")
-API_KEY = os.getenv("API_KEY")
-ARTIFACT_PATH = os.getenv("ARTIFACT_PATH")
-THRESHOLD = float(os.getenv("THRESHOLD"))  # THRESHOLD doit être casté en float
-COST_FN = int(os.getenv("COST_FN"))  # idem
-COST_FP = int(os.getenv("COST_FP"))
-GLOBAL_DATA_PATH = os.getenv("GLOBAL_DATA_PATH")
-TIMEOUT = 10  # Timeout pour les requêtes
+# =================================================================================
+# API_KEY = os.getenv("API_KEY")
+# ARTIFACT_PATH = os.getenv("ARTIFACT_PATH")
+# THRESHOLD = float(os.getenv("THRESHOLD"))  # THRESHOLD doit être casté en float
+# COST_FN = int(os.getenv("COST_FN"))  # idem
+# COST_FP = int(os.getenv("COST_FP"))
+# GLOBAL_DATA_PATH = os.getenv("GLOBAL_DATA_PATH")
+# TIMEOUT = 10  # Timeout pour les requêtes
+# ==================================================================================
 
 
 # --- Fonctions ---
+
+
 def is_valid_url(url: str) -> bool:
     """Vérifie si l'URL a un schéma et un netloc (domaine + port valides)"""
     try:
@@ -49,22 +48,46 @@ def is_valid_url(url: str) -> bool:
         return False
 
 
-def check_api_health(timeout: int = 10) -> str | bool:
-    """Vérifie si l'API est disponible. Retourne True ou un message d'erreur."""
-    if not is_valid_url(API_URL):
-        return "🚫 URL invalide – vérifie le format (ex: http://localhost:8000)"
+def connect_api(timeout: int = 60, retry_every: int = 5) -> bool:
+    """Tente de joindre l’API avec un chrono, retourne True ou False."""
+    status = st.empty()
+    start = time.time()
 
-    try:
-        response = requests.get(f"{API_URL}/health", timeout=timeout)
-        if response.status_code != 200:
-            return f"⚠️ L'API a répondu avec le code {response.status_code}"
-        return True
-    except (InvalidURL, MissingSchema):
-        return "🚫 URL invalide – vérifie le format (ex: http://localhost:8000)"
-    except (ConnectionError, Timeout):
-        return "❌ Impossible de se connecter – serveur backend non démarré ?"
-    except RequestException as e:
-        return f"⚠️ Problème lors de la requête : {str(e)}"
+    if not is_valid_url(API_URL):
+        status.error(
+            "🚫 URL invalide ! – vérifie le format (ex: http://localhost:8000)"
+        )
+        return False
+
+    while True:
+        elapsed = int(time.time() - start)
+        remaining = timeout - elapsed
+        if remaining <= 0:
+            status.error(
+                "❌ Impossible de se connecter – serveur backend trop lent ou inactif."
+            )
+            return False
+
+        status.info(f"⏳ Tentative… {remaining} s restantes")
+        try:
+            r = requests.get(f"{API_URL}/health", timeout=5)
+            if r.status_code == 200:
+                status.success("✅ API joignable")
+                time.sleep(0.5)
+                status.empty()  # <-- on efface tous les messages de connexion
+                return True
+            else:
+                status.warning(f"⚠️ Code {r.status_code}")
+        except (ConnectionError, Timeout):
+            pass  # on retente
+        except (InvalidURL, MissingSchema):
+            status.error("🚫 URL invalide !")
+            return False
+
+        time.sleep(retry_every)
+
+
+# ===== fetch =============================
 
 
 @st.cache_data
