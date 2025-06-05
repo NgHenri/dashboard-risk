@@ -21,9 +21,15 @@ COPY frontend/requirements.txt .
 RUN pip install --upgrade pip
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Étape 6 : copie du code Streamlit
+# Étape 6 : copie du modèle
+# ← Ici on copie le modèle depuis le dossier backend/ dans un dossier models/ du conteneur frontend
+RUN mkdir -p models
+COPY backend/models/lightgbm_production_artifact_20250415_081218.pkl models/
+
+
+# Étape 7 : copie du code Streamlit
 COPY frontend .
 
-# Étape 7 : définition du port et de la commande de démarrage
+# Étape 8 : définition du port et de la commande de démarrage
 EXPOSE 8501
 CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
