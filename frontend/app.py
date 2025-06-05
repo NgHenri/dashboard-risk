@@ -272,6 +272,7 @@ if df_test.empty or not model:
 
 
 artifacts = joblib.load(ARTIFACT_PATH)
+
 # print(artifacts.keys())
 # =============================================================================
 # 📦 Initialisation et vérifications
