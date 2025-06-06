@@ -36,6 +36,8 @@ from collections.abc import AsyncIterator
 import re
 from redis import asyncio as aioredis
 import json
+from model import load_artifacts
+from fastapi.responses import FileResponse
 
 # === 1. Chargement des variables d'environnement ===
 # load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
@@ -250,21 +252,11 @@ def rotate_redis_token():
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # === 14. Chargement des artefacts ===
-# ARTIFACT_PATH = "models/lightgbm_production_artifact_20250415_081218.pkl"
 ARTIFACT_PATH = os.path.join(
     BASE_DIR, "models", "lightgbm_production_artifact_20250415_081218.pkl"
 )
 
-try:
-    artifacts = joblib.load(ARTIFACT_PATH)
-    model = artifacts["model"]
-    scaler = artifacts["scaler"]
-    features = artifacts["metadata"]["features"]
-    threshold = artifacts["metadata"]["optimal_threshold"]
-    logger.info("Artefacts chargés avec succès.")
-except Exception as e:
-    logger.critical(f"Erreur de chargement des artefacts : {e}")
-    raise RuntimeError("Impossible de charger les artefacts du modèle.")
+model, scaler, features, threshold = load_artifacts(ARTIFACT_PATH)
 
 # === 15. Initialisation SHAP ===
 explainer = shap.Explainer(model)
@@ -345,6 +337,20 @@ async def test_redis():
         return {"status": f"✅ Redis OK: {pong}"}
     except Exception as e:
         return {"status": f"❌ Erreur Redis: {str(e)}"}
+
+
+# ========== artefact ===============================
+
+
+@app.get("/download-model", include_in_schema=False)
+async def download_model():
+    if not os.path.exists(ARTIFACT_PATH):
+        raise HTTPException(status_code=404, detail="Fichier artefact introuvable.")
+    return FileResponse(
+        ARTIFACT_PATH,
+        media_type="application/octet-stream",
+        filename=os.path.basename(ARTIFACT_PATH),
+    )
 
 
 # ========== all data ===============================
