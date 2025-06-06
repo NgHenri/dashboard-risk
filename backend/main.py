@@ -36,7 +36,9 @@ from collections.abc import AsyncIterator
 import re
 from redis import asyncio as aioredis
 import json
-from model import load_artifacts
+
+# from model import load_artifacts
+from backend.model import load_artifacts
 from fastapi.responses import FileResponse
 
 # === 1. Chargement des variables d'environnement ===
