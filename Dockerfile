@@ -20,19 +20,13 @@ RUN pip install --upgrade pip
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Étape 6 : copie du code fast api
-COPY backend .
+COPY backend /app/backend
 
-# Étape 7 : copie du csv
-COPY backend/data ./data
-
-# ✅ Étape 8 : copie du modèle
-COPY backend/models ./models
-
-# Étape 9 : définition du port et de la commande de démarrage
-EXPOSE $PORT
-
-# Copie du script d'entrée
+# Étape 7 : Copie du script d'entrée
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
+
+# Étape 8 : définition du port et de la commande de démarrage
+EXPOSE $PORT
 
 CMD ["/entrypoint.sh"]
