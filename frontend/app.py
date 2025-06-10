@@ -24,7 +24,6 @@ from config import (
     TIMEOUT,
     THRESHOLD,
     BATCH_SIZE,
-    ARTIFACT_PATH,
     TIMEOUT_GLOBAL,
     RETRY_EVERY,
     LOGO_PATH,

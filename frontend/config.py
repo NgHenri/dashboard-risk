@@ -44,21 +44,26 @@ def _get_int(key: str, default: int) -> int:
 # Chemin du fichier courant
 current_path = Path(__file__).resolve()
 
-# Si on est en local (structure projet avec dossier parent), sinon Render (copié à la racine /app)
+# Racine du projet (en local ou sur Render)
 if (current_path.parent / "models").exists():
     ROOT_DIR = current_path.parent
 else:
     ROOT_DIR = current_path.parent.parent
 
+# Mode local si ARTIFACT_PATH est défini et dossier modèle présent
 artifact_path_str = os.getenv("ARTIFACT_PATH")
+IS_LOCAL = artifact_path_str is not None and (ROOT_DIR / artifact_path_str).exists()
 
-if not artifact_path_str:
-    raise ValueError("❌ La variable d'environnement 'ARTIFACT_PATH' est manquante.")
+# Si en local, charger le modèle depuis le disque
+if IS_LOCAL:
+    ARTIFACT_PATH = ROOT_DIR / artifact_path_str
 
-ARTIFACT_PATH = ROOT_DIR / artifact_path_str
-
-if not ARTIFACT_PATH.exists():
-    raise FileNotFoundError(f"❌ Modèle introuvable à l'emplacement : {ARTIFACT_PATH}")
+    if not ARTIFACT_PATH.exists():
+        raise FileNotFoundError(
+            f"❌ Modèle introuvable à l'emplacement : {ARTIFACT_PATH}"
+        )
+else:
+    ARTIFACT_PATH = None  # Le modèle sera téléchargé depuis le backend par app.py
 
 
 # Configuration centrale
