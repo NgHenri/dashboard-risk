@@ -75,6 +75,8 @@ GLOBAL_DATA_PATH = os.getenv("GLOBAL_DATA_PATH")
 COST_FN = _get_int("COST_FN", 10)
 COST_FP = _get_int("COST_FP", 1)
 
+LOGO_PATH = os.getenv("LOGO_PATH", "")
+
 THRESHOLD = _get_float("THRESHOLD", 0.0931515)
 TIMEOUT = _get_int("TIMEOUT", 10)
 TIMEOUT_GLOBAL = _get_int("TIMEOUT_GLOBAL", 180)
@@ -86,7 +88,9 @@ DEBUG = os.getenv("DEBUG", "False").lower() in ("1", "true", "yes")
 print(
     f"🔧 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Variables chargées depuis config.py"
 )
-print(f"   • API_URL   = {API_URL}")
+print(
+    f"🔧 API_URL utilisée : {API_URL} (source = {'Render/env' if 'API_URL' in os.environ else '.env'})"
+)
 print(f"   • THRESHOLD = {THRESHOLD}")
 print(f"   • TIMEOUT   = {TIMEOUT}")
 print(f"   • DEBUG     = {DEBUG}")

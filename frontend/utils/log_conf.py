@@ -72,7 +72,7 @@ def setup_logger(name="LoanApp", log_file="app.log"):
     # Console avec couleur
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(color_formatter)
-    console_handler.setLevel(logging.INFO)
+    console_handler.setLevel(logging.DEBUG)
 
     # Fichier (sans couleur)
     file_handler = RotatingFileHandler(

@@ -27,6 +27,7 @@ from config import (
     ARTIFACT_PATH,
     TIMEOUT_GLOBAL,
     RETRY_EVERY,
+    LOGO_PATH,
 )
 
 from risk_gauge import show_risk_gauge, display_risk_message, animate_risk_gauge
@@ -95,43 +96,35 @@ from utils.definition import (
 # === Utils : log ====
 from utils.log_conf import setup_logger
 import logging
+import tempfile
+from pathlib import Path
 
 logger = setup_logger("LoanApp")
+
 # ===== Paramètres de configuration =====
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
-# load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-# ===== Configuration initiale =====
-if "init" not in st.session_state:
-    logger.info("Démarrage initial de l'application")
-    st.session_state["init"] = True
-# print("🛠️ API_URL:", API_URL)
-
-# ===== Vérification de la connexion API =====
-# Fonction de vérification
-# ===== Vérification de la connexion API =====
-
+# Initialisation Streamlit
 st.set_page_config(
     page_title="Credit Default Risk Dashboard",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
 )
+# ===== Vérification de la connexion API =====
+# Fonction de vérification
+# ===== Vérification de la connexion API =====
 
-# 4️⃣ Lancement de la connexion
 if "api_available" not in st.session_state:
     st.session_state.api_available = connect_api(
         timeout=TIMEOUT_GLOBAL, retry_every=RETRY_EVERY
     )
-
-if not st.session_state.api_available:
-    st.stop()
-# st.set_page_config(layout="wide")
-st.title("🏦 Dashboard Home Credit Default Risk")
-st.caption("Prédictions & Explicabilité")
+    if not st.session_state.api_available:
+        st.error("🔌 Connexion API impossible - Vérifiez les logs")
+        st.stop()
 
 
 # ===== Chargement des données =====
@@ -169,8 +162,17 @@ def load_test_data_from_api():
 
 
 # Chargement des données depuis l'API
-df_test_raw = load_test_data_from_api()
-df_test = restore_discrete_types(df_test_raw, max_cardinality=15, verbose=False)
+@st.cache_data(show_spinner="Chargement des données clients...")
+def load_and_verify_test_data():
+    """Charge et valide les données de test"""
+    df_raw = load_test_data_from_api()
+    if df_raw.empty:
+        st.error("📂 Erreur de chargement des données clients")
+        st.stop()
+    return restore_discrete_types(df_raw, max_cardinality=15)
+
+
+df_test = load_and_verify_test_data()
 
 # Vérification si les données sont vides après chargement
 if df_test.empty:
@@ -180,98 +182,116 @@ if df_test.empty:
 
 # ===== Chargement des artefacts du modèle =====
 # Fonction pour charger le modèle et les artefacts associés (scaler, explainer, etc.)
-@st.cache_resource
-def load_model_artifacts():
+# =============
+@st.cache_resource(show_spinner="Initialisation du modèle...")
+def load_and_verify_artifacts():
+    """Charge et valide les artefacts du modèle"""
     try:
-        artifacts = joblib.load(ARTIFACT_PATH)
+        return _load_model_artifacts()
     except Exception as e:
-        import traceback
+        logger.exception("Échec critique du chargement des artefacts")
+        st.error(f"⚙️ Erreur technique: {str(e)}")
+        st.stop()
 
-        print("[ERREUR] Échec du chargement du modèle :")
-        traceback.print_exc()
-        raise RuntimeError("Impossible de charger les artefacts du modèle.")
+
+def _load_model_artifacts():
+    """Logique interne de chargement des artefacts"""
+    backend_url = os.getenv("API_URL")
+
+    # 1. Téléchargement du modèle
+    model_response = requests.get(
+        f"{backend_url}/download-model", headers={"x-api-key": API_KEY}, timeout=TIMEOUT
+    )
+    model_response.raise_for_status()
+
+    # 2. Sauvegarde temporaire
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pkl") as tmp_file:
+        tmp_file.write(model_response.content)
+        tmp_path = tmp_file.name
+
+    # 3. Chargement des artefacts
+    artifacts = joblib.load(tmp_path)
+    model = artifacts["model"]
+    scaler = artifacts["scaler"]
+    features = artifacts["metadata"]["features"]
+
+    # 4. Préparation SHAP
+    explainer = shap.TreeExplainer(model)
+    shap_response = requests.get(
+        f"{backend_url}/global_shap_sample",
+        headers={"x-api-key": API_KEY},
+        timeout=TIMEOUT,
+    )
+    shap_response.raise_for_status()
+
+    df_sample = pd.DataFrame(shap_response.json())
+    df_sample_scaled = scaler.transform(df_sample[features])
+    global_shap_values = explainer.shap_values(df_sample_scaled)
+
+    return {
+        "model": model,
+        "scaler": scaler,
+        "features": features,
+        "explainer": explainer,
+        "global_shap_values": global_shap_values,
+        "df_sample": df_sample,
+    }
+
+
+# Chargement principal
+artifacts = load_and_verify_artifacts()
+
+# ===== Initialisation session state =====
+if "init" not in st.session_state:
+    # Début d'initialisation
+    logger.info("🚀 Démarrage initial de l'application")
 
     try:
-        model = artifacts["model"]
-        scaler = artifacts["scaler"]
-        features = artifacts["metadata"]["features"]
-        explainer = shap.TreeExplainer(model)
-
-        # Récupération des données via l'API pour SHAP global
-        response = requests.get(
-            f"{API_URL}/global_shap_sample",
-            headers={"x-api-key": API_KEY},
-            timeout=TIMEOUT,
+        # Injection des données et artefacts
+        st.session_state.update(
+            {
+                "init": True,
+                "df_test": df_test,
+                "model": artifacts["model"],
+                "scaler": artifacts["scaler"],
+                "features": artifacts["features"],
+                "explainer": artifacts["explainer"],
+                "global_shap_values": artifacts["global_shap_values"],
+                "df_sample": artifacts["df_sample"],
+            }
         )
-        response.raise_for_status()
-        df_test_sample = pd.DataFrame(response.json())
 
-        # Calcul des SHAP values pour l'échantillon de test
-        df_test_sample_scaled = scaler.transform(df_test_sample[features])
-        global_shap_values = explainer.shap_values(df_test_sample_scaled)
+        # Log de confirmation
+        logger.info("✅ Session state initialisé avec succès")
+        logger.debug(f"Clés session_state: {list(st.session_state.keys())}")
 
+        df = st.session_state["df_test"]
+        features = st.session_state["features"]
+        model = st.session_state["model"]
+        shap_vals = st.session_state["global_shap_values"]
+
+        logger.info(f"Nombre de clients chargés    : {len(df)}")
+        logger.info(f"Features du modèle          : {len(features)} variables")
+        logger.info(f"Type de modèle              : {type(model).__name__}")
+        logger.info(f"SHAP values calculées       : {shap_vals.shape}")
     except Exception as e:
-        print(f"[ERREUR] Post-chargement : {e}")
-        traceback.print_exc()
-        raise RuntimeError("Échec lors de la préparation des artefacts.")
+        # Gestion d'erreur détaillée
+        logger.critical(f"Échec d'initialisation du session state: {str(e)}")
+        st.error("Erreur critique d'initialisation - voir les logs")
+        st.stop()
 
-    return model, scaler, features, explainer, global_shap_values, df_test_sample
+# ===== Vérification finale =====
+required_keys = ["model", "scaler", "features", "explainer", "df_test"]
+missing_keys = [key for key in required_keys if key not in st.session_state]
 
-
-# Chargement du modèle
-try:
-    model, scaler, features, explainer, global_shap_values, df_test_sample = (
-        load_model_artifacts()
-    )
-    if not st.session_state.get("artifacts_loaded", False):
-        logger.info("Initialisation terminée")
-        st.session_state["artifacts_loaded"] = True
-    # Stockage dans la session
-    st.session_state.update(
-        {
-            "df_test": df_test,
-            "model": model,
-            "scaler": scaler,
-            "features": features,
-            "explainer": explainer,
-        }
-    )
-except Exception as e:
-    logger.exception("Échec du chargement du modèle")
-    st.error("Erreur modèle - voir les logs techniques")
-    # st.stop()
-    import traceback
-
-    print("=== ERREUR DÉTAILLÉE ===")
-    traceback.print_exc()  # <--- CECI AFFICHE L’ERREUR RÉELLE
-    raise RuntimeError("Impossible de charger les artefacts du modèle.")
-
-# ===== Vérification de l'état après initialisation =====
-else:
-    # Vérification de tous les éléments requis
-    required_keys = ["df_test", "model", "scaler", "features", "explainer"]
-    missing_keys = [key for key in required_keys if key not in st.session_state]
-
-    if missing_keys:
-        logger.error(f"Clés manquantes dans session_state: {missing_keys}")
-        st.error("État de session corrompu - réinitialisation nécessaire")
-        del st.session_state.init
-        st.experimental_rerun()
-
-# ===== Récupération sécurisée des données =====
-df_test = st.session_state.get("df_test", pd.DataFrame())
-model = st.session_state.get("model")
-scaler = st.session_state.get("scaler")
-features = st.session_state.get("features", [])
-explainer = st.session_state.get("explainer")
-
-# Vérification finale avant rendu
-if df_test.empty or not model:
-    st.error("État invalide - réinitialisez l'application")
+if missing_keys:
+    logger.critical(f"Clés manquantes: {missing_keys}")
+    st.error("🚨 État de session corrompu - Veuillez recharger la page")
     st.stop()
 
-
-artifacts = joblib.load(ARTIFACT_PATH)
+# ===== Interface utilisateur =====
+st.title("🏦 Dashboard Home Credit Default Risk")
+st.caption("Prédictions & Explicabilité")
 
 # print(artifacts.keys())
 # =============================================================================
@@ -292,6 +312,11 @@ tab1, tab2, tab3 = st.tabs(["Prédiction", "Exploration", "Analyse & Recommandat
 # =============================================================================
 # 🧭 Barre latérale (sidebar)
 # =============================================================================
+st.sidebar.image(
+    str(LOGO_PATH),
+    use_container_width=True,  # adapte la taille à la largeur de la sidebar
+    caption="Dashboard Prêt à dépenser",  # optionnel, un petit texte sous l'image
+)
 st.sidebar.markdown("## 🔍 Analyse d'un client")
 
 # Sélection du client
