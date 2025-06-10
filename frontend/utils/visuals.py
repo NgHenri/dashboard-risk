@@ -611,7 +611,7 @@ def plot_client_position_in_group(df_results: pd.DataFrame, selected_client_id: 
             y1=1,
             xref="x2",
             yref="paper",
-            line=dict(color="red", width=2, dash="dash"),
+            line=dict(color="yellow", width=2, dash="dash"),
         )
     )
     fig.add_annotation(
