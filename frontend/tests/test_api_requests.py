@@ -100,7 +100,7 @@ mock_client_info = {
 
 
 class TestApiRequests(unittest.TestCase):
-    @patch("frontend.utils.api_requests.fetch_client_info")
+    @patch("frontend.tests.test_api_requests.fetch_client_info")
     def test_fetch_client_info(self, mock_fetch):
         # Données simulées
         mock_client_info = {
@@ -116,13 +116,16 @@ class TestApiRequests(unittest.TestCase):
         # Appel réel
         client_info = fetch_client_info(400464)
 
+        print(
+            f"Client info: {client_info}"
+        )  # Ajoutez ceci pour voir ce qui est retourné
         # Assertions
         self.assertEqual(client_info["SK_ID_CURR"], 400464)
         self.assertEqual(client_info["AMT_CREDIT"], 343800)
         self.assertAlmostEqual(client_info["PAYMENT_RATE"], 0.0490183246073298)
         self.assertEqual(client_info["NAME_INCOME_TYPE_WORKING"], 1)
 
-    @patch("frontend.utils.api_requests.fetch_client_info")
+    @patch("frontend.tests.test_api_requests.fetch_client_info")
     def test_fetch_client_info_not_found(self, mock_fetch):
         # Simule un retour None ou erreur gérée
         mock_fetch.return_value = None
