@@ -17,7 +17,10 @@ import time
 
 # from dotenv import load_dotenv
 import pandas as pd
-from config import API_URL, API_KEY, TIMEOUT
+
+# from config import API_URL, API_KEY, TIMEOUT
+
+from frontend.config import API_URL, API_KEY, TIMEOUT
 
 
 # Charger .env

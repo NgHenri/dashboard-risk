@@ -9,7 +9,8 @@ import streamlit as st
 import os
 
 # from dotenv import load_dotenv
-from config import API_URL, API_KEY, TIMEOUT
+# from config import API_URL, API_KEY, TIMEOUT
+from frontend.config import API_URL, API_KEY, TIMEOUT
 
 
 # ========== Paramètres globaux ==========

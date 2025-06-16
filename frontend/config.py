@@ -9,7 +9,7 @@ from datetime import datetime
 def load_env(env_file: str = ".env"):
     from dotenv import load_dotenv
 
-    load_dotenv(dotenv_path=env_file)
+    load_dotenv(dotenv_path=env_file, override=True)
 
     # Vérifie ce qui est chargé
     api_url = os.getenv("API_URL")
@@ -18,8 +18,9 @@ def load_env(env_file: str = ".env"):
 
     return {
         "API_URL": api_url,
-        "API_KEY": api_key,
+        "API_KEY": os.getenv("API_KEY"),
         "ARTIFACT_PATH": os.getenv("ARTIFACT_PATH"),
+        "MODEL_PATH": os.getenv("MODEL_PATH"),
     }
 
 
