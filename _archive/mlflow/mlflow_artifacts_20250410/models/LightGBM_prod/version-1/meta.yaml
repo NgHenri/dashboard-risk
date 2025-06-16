@@ -1,0 +1,14 @@
+aliases: []
+creation_timestamp: 1744254861686
+current_stage: None
+description: null
+last_updated_timestamp: 1744254861686
+name: LightGBM_prod
+run_id: d36cc1867d60433aa5b5f66a9e33634e
+run_link: null
+source: file:///content/mlruns/196570904696646563/d36cc1867d60433aa5b5f66a9e33634e/artifacts/models/LightGBM
+status: READY
+status_message: null
+storage_location: file:///content/mlruns/196570904696646563/d36cc1867d60433aa5b5f66a9e33634e/artifacts/models/LightGBM
+user_id: null
+version: 1

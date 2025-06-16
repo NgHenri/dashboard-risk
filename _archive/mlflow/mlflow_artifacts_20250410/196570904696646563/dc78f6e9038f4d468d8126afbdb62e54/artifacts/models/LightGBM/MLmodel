@@ -1,0 +1,106 @@
+artifact_path: models/LightGBM
+flavors:
+  python_function:
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.sklearn
+    model_path: model.pkl
+    predict_fn: predict
+    python_version: 3.11.11
+  sklearn:
+    code: null
+    pickled_model: model.pkl
+    serialization_format: cloudpickle
+    sklearn_version: 1.6.1
+is_signature_from_type_hint: false
+mlflow_version: 2.21.3
+model_size_bytes: 6598676
+model_uuid: 21c03c60c03842719f27653b25896e96
+prompts: null
+run_id: dc78f6e9038f4d468d8126afbdb62e54
+saved_input_example_info:
+  artifact_path: input_example.json
+  pandas_orient: split
+  serving_input_path: serving_input_example.json
+  type: dataframe
+signature:
+  inputs: '[{"type": "double", "name": "EXT_SOURCE_1", "required": true}, {"type":
+    "double", "name": "EXT_SOURCE_2", "required": true}, {"type": "double", "name":
+    "EXT_SOURCE_3", "required": true}, {"type": "double", "name": "AMT_CREDIT", "required":
+    true}, {"type": "double", "name": "ANNUITY_INCOME_PERC", "required": true}, {"type":
+    "double", "name": "BURO_DAYS_CREDIT_ENDDATE_MEAN", "required": true}, {"type":
+    "double", "name": "BURO_DAYS_CREDIT_UPDATE_MEAN", "required": true}, {"type":
+    "double", "name": "DAYS_BIRTH", "required": true}, {"type": "double", "name":
+    "DAYS_ID_PUBLISH", "required": true}, {"type": "double", "name": "FLAG_EMP_PHONE",
+    "required": true}, {"type": "double", "name": "NAME_INCOME_TYPE_PENSIONER", "required":
+    true}, {"type": "double", "name": "BURO_AMT_CREDIT_SUM_MAX", "required": true},
+    {"type": "double", "name": "BURO_CREDIT_ACTIVE_CLOSED_MEAN", "required": true},
+    {"type": "double", "name": "BURO_CREDIT_TYPE_CAR_LOAN_MEAN", "required": true},
+    {"type": "double", "name": "BURO_CREDIT_TYPE_CREDIT_CARD_MEAN", "required": true},
+    {"type": "double", "name": "BURO_CREDIT_TYPE_MICROLOAN_MEAN", "required": true},
+    {"type": "double", "name": "BURO_CREDIT_TYPE_MORTGAGE_MEAN", "required": true},
+    {"type": "double", "name": "BURO_DAYS_CREDIT_ENDDATE_MAX", "required": true},
+    {"type": "double", "name": "BURO_DAYS_CREDIT_MEAN", "required": true}, {"type":
+    "double", "name": "CODE_GENDER", "required": true}, {"type": "double", "name":
+    "DAYS_EMPLOYED_PERC", "required": true}, {"type": "double", "name": "DAYS_LAST_PHONE_CHANGE",
+    "required": true}, {"type": "double", "name": "DAYS_REGISTRATION", "required":
+    true}, {"type": "double", "name": "DEF_60_CNT_SOCIAL_CIRCLE", "required": true},
+    {"type": "double", "name": "FLAG_DOCUMENT_3", "required": true}, {"type": "double",
+    "name": "FLAG_DOCUMENT_6", "required": true}, {"type": "double", "name": "NAME_HOUSING_TYPE_RENTED_APARTMENT",
+    "required": true}, {"type": "double", "name": "OCCUPATION_TYPE_ACCOUNTANTS", "required":
+    true}, {"type": "double", "name": "ORGANIZATION_TYPE_BUSINESS_ENTITY_TYPE_3",
+    "required": true}, {"type": "double", "name": "ORGANIZATION_TYPE_MILITARY", "required":
+    true}, {"type": "double", "name": "ORGANIZATION_TYPE_SELF_EMPLOYED", "required":
+    true}, {"type": "double", "name": "PAYMENT_RATE", "required": true}, {"type":
+    "double", "name": "REGION_POPULATION_RELATIVE", "required": true}, {"type": "double",
+    "name": "REGION_RATING_CLIENT_W_CITY", "required": true}, {"type": "double", "name":
+    "REG_CITY_NOT_LIVE_CITY", "required": true}, {"type": "double", "name": "ACTIVE_DAYS_CREDIT_ENDDATE_MEAN",
+    "required": true}, {"type": "double", "name": "AMT_REQ_CREDIT_BUREAU_QRT", "required":
+    true}, {"type": "double", "name": "APPROVED_AMT_ANNUITY_MEAN", "required": true},
+    {"type": "double", "name": "APPROVED_DAYS_DECISION_MIN", "required": true}, {"type":
+    "double", "name": "APPROVED_HOUR_APPR_PROCESS_START_MEAN", "required": true},
+    {"type": "double", "name": "BURO_AMT_CREDIT_MAX_OVERDUE_MEAN", "required": true},
+    {"type": "double", "name": "BURO_AMT_CREDIT_SUM_DEBT_SUM", "required": true},
+    {"type": "double", "name": "BURO_CREDIT_TYPE_ANOTHER_TYPE_OF_LOAN_MEAN", "required":
+    true}, {"type": "double", "name": "BURO_CREDIT_TYPE_LOAN_FOR_BUSINESS_DEVELOPMENT_MEAN",
+    "required": true}, {"type": "double", "name": "BURO_CREDIT_TYPE_LOAN_FOR_THE_PURCHASE_OF_EQUIPMENT_MEAN",
+    "required": true}, {"type": "double", "name": "BURO_DAYS_CREDIT_MAX", "required":
+    true}, {"type": "double", "name": "BURO_DAYS_CREDIT_VAR", "required": true}, {"type":
+    "double", "name": "CLOSED_AMT_CREDIT_SUM_SUM", "required": true}, {"type": "double",
+    "name": "ELEVATORS_AVG", "required": true}, {"type": "double", "name": "FLAG_DOCUMENT_13",
+    "required": true}, {"type": "double", "name": "FLAG_DOCUMENT_15", "required":
+    true}, {"type": "double", "name": "FLAG_DOCUMENT_16", "required": true}, {"type":
+    "double", "name": "FLAG_DOCUMENT_17", "required": true}, {"type": "double", "name":
+    "FLAG_DOCUMENT_20", "required": true}, {"type": "double", "name": "FLAG_DOCUMENT_21",
+    "required": true}, {"type": "double", "name": "FLAG_OWN_CAR", "required": true},
+    {"type": "double", "name": "FLAG_WORK_PHONE", "required": true}, {"type": "double",
+    "name": "FLOORSMAX_MODE", "required": true}, {"type": "double", "name": "INCOME_CREDIT_PERC",
+    "required": true}, {"type": "double", "name": "INCOME_PER_PERSON", "required":
+    true}, {"type": "double", "name": "INSTAL_AMT_PAYMENT_MAX", "required": true},
+    {"type": "double", "name": "INSTAL_AMT_PAYMENT_MEAN", "required": true}, {"type":
+    "double", "name": "INSTAL_AMT_PAYMENT_MIN", "required": true}, {"type": "double",
+    "name": "INSTAL_AMT_PAYMENT_SUM", "required": true}, {"type": "double", "name":
+    "INSTAL_DAYS_ENTRY_PAYMENT_MAX", "required": true}, {"type": "double", "name":
+    "INSTAL_DAYS_ENTRY_PAYMENT_SUM", "required": true}, {"type": "double", "name":
+    "INSTAL_DBD_MAX", "required": true}, {"type": "double", "name": "INSTAL_DBD_MEAN",
+    "required": true}, {"type": "double", "name": "INSTAL_DBD_SUM", "required": true},
+    {"type": "double", "name": "INSTAL_DPD_MEAN", "required": true}, {"type": "double",
+    "name": "INSTAL_PAYMENT_DIFF_MEAN", "required": true}, {"type": "double", "name":
+    "INSTAL_PAYMENT_DIFF_SUM", "required": true}, {"type": "double", "name": "LIVE_CITY_NOT_WORK_CITY",
+    "required": true}, {"type": "double", "name": "LIVINGAREA_MODE", "required": true},
+    {"type": "double", "name": "NAME_EDUCATION_TYPE_ACADEMIC_DEGREE", "required":
+    true}, {"type": "double", "name": "NAME_EDUCATION_TYPE_SECONDARY__SECONDARY_SPECIAL",
+    "required": true}, {"type": "double", "name": "NAME_FAMILY_STATUS_MARRIED", "required":
+    true}, {"type": "double", "name": "NAME_HOUSING_TYPE_CO_OP_APARTMENT", "required":
+    true}, {"type": "double", "name": "NAME_HOUSING_TYPE_MUNICIPAL_APARTMENT", "required":
+    true}, {"type": "double", "name": "NAME_INCOME_TYPE_STUDENT", "required": true},
+    {"type": "double", "name": "NAME_INCOME_TYPE_WORKING", "required": true}, {"type":
+    "double", "name": "NAME_TYPE_SUITE_OTHER_B", "required": true}, {"type": "double",
+    "name": "OCCUPATION_TYPE_DRIVERS", "required": true}, {"type": "double", "name":
+    "OCCUPATION_TYPE_LABORERS", "required": true}, {"type": "double", "name": "OCCUPATION_TYPE_LOW_SKILL_LABORERS",
+    "required": true}]'
+  outputs: '[{"type": "tensor", "tensor-spec": {"dtype": "float64", "shape": [-1]}}]'
+  params: null
+type_hint_from_example: false
+utc_time_created: '2025-04-10 06:34:28.457501'
